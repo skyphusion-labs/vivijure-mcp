@@ -1,0 +1,62 @@
+{
+  "name": "@skyphusion-labs/vivijure-mcp",
+  "version": "0.1.0",
+  "description": "Vivijure Studio MCP server: stateless HTTP proxy so AI agents drive the Studio API (docs/CONTRACT.md). Host-agnostic; deploy on Cloudflare Workers via vivijure-cf or vivijure-local.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "homepage": "https://github.com/skyphusion-labs/vivijure-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skyphusion-labs/vivijure-mcp.git"
+  },
+  "keywords": [
+    "vivijure",
+    "mcp",
+    "model-context-protocol",
+    "ai-video",
+    "agpl"
+  ],
+  "main": "./dist/mcp.js",
+  "types": "./dist/mcp.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
+    "./mcp-env": {
+      "types": "./dist/mcp-env.d.ts",
+      "import": "./dist/mcp-env.js"
+    },
+    "./mcp-tools": {
+      "types": "./dist/mcp-tools.d.ts",
+      "import": "./dist/mcp-tools.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=cobertura --coverage.reporter=text",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

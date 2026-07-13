@@ -1,0 +1,52 @@
+name: Publish npm package
+
+# Tag: git tag vivijure-mcp-v0.1.0 && git push origin vivijure-mcp-v0.1.0
+# Or: workflow_dispatch (uses version in package.json).
+#
+# Required repo secret: NPM_TOKEN
+
+on:
+  push:
+    tags:
+      - "vivijure-mcp-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: npm publish @skyphusion-labs/vivijure-mcp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run typecheck && npm test && npm run build
+      - name: Verify tag matches package version
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          tag="${tag#vivijure-mcp-v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag vivijure-mcp-v$tag does not match package.json version $pkg" >&2
+            exit 1
+          fi
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          pkg="$(node -p "require('./package.json').name")"
+          ver="$(node -p "require('./package.json').version")"
+          if npm view "${pkg}@${ver}" version >/dev/null 2>&1; then
+            echo "Skip: ${pkg}@${ver} already published"
+            exit 0
+          fi
+          npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

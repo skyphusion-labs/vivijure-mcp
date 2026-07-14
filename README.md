@@ -1,8 +1,14 @@
 # @skyphusion-labs/vivijure-mcp
 
-Stateless [Model Context Protocol](https://modelcontextprotocol.io/) server for [Vivijure Studio](https://vivijure.com).
-Proxies curated tools to the studio HTTP API (`docs/CONTRACT.md` in host repos). Works against **any** studio host
-(`vivijure-cf`, `vivijure-local`, or the legacy monolith) by setting `STUDIO_URL`.
+**Agent MCP for [Vivijure Studio](https://vivijure.com)** -- drive the film studio from Claude, Cursor,
+or any MCP client. Stateless [Model Context Protocol](https://modelcontextprotocol.io/) server that
+proxies curated tools to the studio HTTP API (`docs/CONTRACT.md` in host repos).
+
+Works against **both control panel hosts**
+([`vivijure-cf`](https://github.com/skyphusion-labs/vivijure-cf) on Cloudflare, or
+[`vivijure-local`](https://github.com/skyphusion-labs/vivijure-local) on a home PC / any cloud server)
+by setting `STUDIO_URL`. Shared orchestration for those hosts lives in
+[`vivijure-core`](https://github.com/skyphusion-labs/vivijure-core).
 
 ## Install
 

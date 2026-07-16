@@ -10,6 +10,8 @@ Works against **both control panel hosts**
 by setting `STUDIO_URL`. Shared orchestration for those hosts lives in
 [`vivijure-core`](https://github.com/skyphusion-labs/vivijure-core).
 
+**Vivijure Studio:** https://vivijure.com · **Live demo:** https://demo.vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+
 ## Install
 
 ```bash

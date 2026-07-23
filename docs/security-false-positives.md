@@ -15,3 +15,4 @@ Documented dismissals for adversarial-audit (K2.7/K3) findings that are not acti
 | Date | Audit | Finding | Rationale |
 | --- | --- | --- | --- |
 | 2026-07-23 | K3 verify ~18:04 | Fork PR id-token: write | Org fork-PR CI pattern; upload gated |
+| 2026-07-23 | K3 verify ~18:04 | pull-requests:write on fork PR | Org fork-PR CI pattern; upload gated |

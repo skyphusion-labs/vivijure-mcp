@@ -509,6 +509,14 @@ export async function runTool(
     };
   }
 
+  const maxRead = 65_536;
+  const cl = parseInt(res.headers.get("content-length") ?? "0", 10) || 0;
+  if (cl > maxRead) {
+    return {
+      content: [{ type: "text", text: `${line}\n\nResponse too large (${cl} bytes); not inlined.` }],
+      isError,
+    };
+  }
   const raw = await res.text().catch(() => "");
   const capped = raw.length > 4000 ? raw.slice(0, 4000) + "\n... (truncated)" : raw;
   return { content: [{ type: "text", text: `${line}\n\n${capped}` }], isError };

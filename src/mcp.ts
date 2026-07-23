@@ -20,6 +20,17 @@ import { TOOLS, TOOLS_BY_NAME, runTool } from "./mcp-tools.js";
 const SERVER_INFO = { name: "vivijure-studio", version: "0.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    let pad = 0;
+    for (let i = 0; i < a.length; i++) pad |= a.charCodeAt(i) ^ a.charCodeAt(i);
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 interface RpcMessage {
   jsonrpc?: string;
   id?: string | number | null;
@@ -95,7 +106,8 @@ export default {
 
     // Bearer gate, fail closed. Machine-to-machine only.
     const auth = request.headers.get("Authorization") ?? "";
-    if (!env.MCP_TOKEN || auth !== `Bearer ${env.MCP_TOKEN}`) {
+    const expected = env.MCP_TOKEN ? `Bearer ${env.MCP_TOKEN}` : "";
+    if (!env.MCP_TOKEN || !timingSafeEqual(auth, expected)) {
       return json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
     }
 

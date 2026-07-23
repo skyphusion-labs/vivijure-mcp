@@ -517,7 +517,33 @@ export async function runTool(
       isError,
     };
   }
-  const raw = await res.text().catch(() => "");
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return { content: [{ type: "text", text: `${line}\n\n(empty body)` }], isError };
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxRead) {
+      await reader.cancel();
+      return {
+        content: [{ type: "text", text: `${line}\n\nResponse too large (>${maxRead} bytes); not inlined.` }],
+        isError,
+      };
+    }
+    chunks.push(value);
+  }
+  const raw = new TextDecoder().decode(
+    chunks.reduce((acc, c) => {
+      const merged = new Uint8Array(acc.length + c.length);
+      merged.set(acc);
+      merged.set(c, acc.length);
+      return merged;
+    }, new Uint8Array()),
+  );
   const capped = raw.length > 4000 ? raw.slice(0, 4000) + "\n... (truncated)" : raw;
   return { content: [{ type: "text", text: `${line}\n\n${capped}` }], isError };
 }

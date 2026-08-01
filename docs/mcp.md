@@ -174,16 +174,19 @@ Rules that hold for every tool, so the reference below does not repeat them:
   body (minus path parameters like `id`). If the studio contract grows a new optional field, the
   agent can pass it through the existing tool immediately; the fields listed below are the
   documented ones, not a hard allowlist.
-- **No binary through the transcript.** Binary responses (video, image, tar, zip) are summarized
-  with their content type and size, never inlined. For a finished film use `poll_film`'s
-  `download_url`; other artifacts live at `GET /api/artifact/<key>`. Non-JSON text is capped at
-  4000 characters.
+- **Images come back as images; everything else binary is summarized.** `view_artifact` returns an
+  image (keyframe, portrait, character ref, a still from `chat`) as an MCP image block, so an agent
+  can actually LOOK at what it made rather than read a byte count. Video, audio, and tar have no MCP
+  content block that can carry them, so they are summarized with content type and size and you fetch
+  them through `artifact_url`. The inlining is opt-in per tool: `studio_request` still summarizes
+  everything binary, deliberately, so a stray call cannot push megabytes through the transport.
+  Non-JSON text is capped at 4000 characters.
 - **No binary uploads either.** To set a portrait, generate the image with `chat` and pass the
   returned artifact key to `set_cast_portrait`; nothing is ever base64-smuggled through a tool call.
 
 ## Tool reference
 
-Nineteen tools in four groups. Arguments marked **(required)** must be present; everything else is
+Twenty-one tools in five groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -333,6 +336,31 @@ Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Phases, in order
 **6 hour TTL** (`FILM_DOWNLOAD_TTL_SECONDS`); download it before it expires (a later `poll_film` re-issues a fresh one). On
 `failed`, the payload carries the real per-shot error: the studio never silently ships an
 unfinished film.
+
+### Artifacts (see what you made)
+
+**`view_artifact`** -- `GET /api/artifact/<key>`. Look at an artifact. An **image** is returned
+inline as an MCP image block. Video and audio cannot be inlined by the protocol; for those use
+`artifact_url`.
+- `key` (required): the R2 artifact key, e.g. `renders/film-<id>/film.mp4` or `cast/portrait.png`.
+
+Keys come from `list_renders` (`output_key`, `keyframes[].key`), `get_cast` (`portrait_key`, refs),
+or a `chat` image reply (`output_artifact.key`). An image over 4 MB is refused with its size rather
+than truncated. A key shaped like a traversal or an absolute path is rejected as a bad argument
+before any request leaves the Worker.
+
+**`artifact_url`** -- `GET /api/artifact-url/<key>`. Turn a key into a **short-lived presigned
+download URL** plus the object's real content type and byte size. This is how a finished film gets
+watched: the link opens directly in a browser with no studio credential.
+- `key` (required): the R2 artifact key.
+- `expires_in`: seconds, clamped by the studio to `[60, 3600]`, default `300`.
+
+> **The URL is a capability credential.** It authenticates on its own and may end up in a log or a
+> transcript, so it is scoped to that one object and short-lived by design; R2 revocation propagates
+> too slowly for revoke-after-use to be a control. Ask for a fresh link instead of storing one.
+
+Requires studio-side support for `/api/artifact-url` (vivijure-cf, cf#317). Against an older studio
+this tool returns a `404` as data, which is the honest answer rather than a broken link.
 
 ### Escape hatch
 

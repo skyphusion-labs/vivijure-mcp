@@ -19,10 +19,21 @@ export interface StudioCall {
   body?: unknown;
 }
 
+// MCP content blocks a tool result may carry. Text is the default for every JSON reply; `image` is
+// what lets an agent actually SEE a rendered still instead of being told how many bytes it was
+// (cf#317). MCP has no video block, so a film is delivered as a presigned URL, never inlined.
+export type McpContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 export interface McpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  // cf#317: opt this tool into returning image bytes as an MCP image block. Off by default, because
+  // the generic escape hatch must keep summarizing binary rather than dumping megabytes into a
+  // transcript; a tool whose PURPOSE is looking at a picture opts in explicitly.
+  inlineImages?: boolean;
   // Translate validated arguments into one studio HTTP call. Throws a plain Error on a bad argument;
   // the caller turns that into an MCP error result (isError: true), never a thrown request.
   build(args: Record<string, unknown>): StudioCall;
@@ -44,6 +55,17 @@ function reqStr(args: Record<string, unknown>, key: string): string {
     throw new Error(`missing required argument '${key}'`);
   }
   return v.trim();
+}
+
+// An R2 artifact key is a multi-segment path ("renders/film-x/film.mp4"). Percent-encode each SEGMENT
+// so a key containing a space or "#" survives the URL, while the slashes that make it a path do not
+// get encoded away. A key shaped like a traversal or an absolute path is refused here rather than
+// forwarded; the studio refuses it too, but a bad argument should read as a bad argument.
+function keyPath(raw: string): string {
+  if (raw.startsWith("/") || raw.includes("://") || raw.split("/").includes("..")) {
+    throw new Error(`invalid artifact key '${raw}'`);
+  }
+  return raw.split("/").map(encodeURIComponent).join("/");
 }
 
 // The body for a POST/PATCH tool: the whole args object minus the named path params, so any extra
@@ -371,6 +393,44 @@ export const TOOLS: McpTool[] = [
     }),
   },
 
+  // --- artifacts (cf#317: see what you made) -----------------------------------
+  {
+    name: "view_artifact",
+    description:
+      "GET /api/artifact/<key>. LOOK AT an artifact. An IMAGE (keyframe, cast portrait, character " +
+      "ref, a still from `chat`) is returned inline so you can actually see it. Video and audio " +
+      "cannot be inlined by MCP: for those use `artifact_url` and open/fetch the presigned link. " +
+      "Keys come from list_renders (output_key, keyframes[].key), get_cast (portrait_key, refs), " +
+      "or a chat image reply (output_artifact.key).",
+    inputSchema: OBJ(
+      { key: STR("The R2 artifact key, e.g. 'renders/film-<id>/film.mp4' or 'cast/portrait.png'.") },
+      ["key"],
+    ),
+    inlineImages: true,
+    build: (a) => ({ method: "GET", path: `/api/artifact/${keyPath(reqStr(a, "key"))}` }),
+  },
+  {
+    name: "artifact_url",
+    description:
+      "GET /api/artifact-url/<key>. Turn an artifact key into a SHORT-LIVED presigned download URL " +
+      "plus its real content-type and byte size. This is how a finished film gets watched: the URL " +
+      "opens directly in a browser with no studio credential. The link is a capability -- anyone " +
+      "holding it can fetch that one object until it expires -- so it is scoped to the single key " +
+      "and clamped to at most 1 hour (default 5 minutes). Ask for a fresh one rather than storing it.",
+    inputSchema: OBJ(
+      {
+        key: STR("The R2 artifact key (see view_artifact)."),
+        expires_in: NUM("Link lifetime in seconds. Clamped to [60, 3600]; default 300."),
+      },
+      ["key"],
+    ),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/artifact-url/${keyPath(reqStr(a, "key"))}`,
+      query: { expires_in: a.expires_in as number | undefined },
+    }),
+  },
+
   // --- escape hatch -----------------------------------------------------------
   {
     name: "studio_request",
@@ -442,10 +502,27 @@ export function studioUrl(env: McpEnv, call: StudioCall): string {
 // pretty-printed; non-JSON (CSV markers) is returned bounded; binary (video/image/tar/octet-stream)
 // is summarized with its size so we never dump bytes through the transcript. isError is true on any
 // >= 400 status or a transport failure, so the agent sees the failure as data.
+// cf#317: cap on an inlined image. A base64 block rides inside the JSON-RPC reply, so this bounds
+// what one tool call can push through the transport; keyframes and portraits are ~1-3MB. Anything
+// larger is refused honestly and pointed at artifact_url rather than silently truncated.
+const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
+
+// Base64 without Buffer (Workers runtime). Chunked because String.fromCharCode.apply on a multi-MB
+// array overflows the call stack.
+function toBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
 export async function runTool(
   env: McpEnv,
   call: StudioCall,
-): Promise<{ content: { type: "text"; text: string }[]; isError: boolean }> {
+  opts: { inlineImages?: boolean } = {},
+): Promise<{ content: McpContent[]; isError: boolean }> {
   if (!env.STUDIO_API_TOKEN) {
     return {
       content: [{ type: "text", text: "MCP is not configured: STUDIO_API_TOKEN is unset." }],
@@ -498,11 +575,37 @@ export async function runTool(
     /^application\/(?:octet-stream|x-tar|zip)/i.test(ct);
   if (isBinaryMedia) {
     const len = res.headers.get("content-length") ?? "unknown";
+    // cf#317: an IMAGE, on a tool that asked to see one, comes back as an MCP image block. This is
+    // the difference between an agent verifying its own output and an agent trusting a status field.
+    // Everything else (video, audio, tar) still gets the summary: MCP has no block that can carry it,
+    // and pretending otherwise would be worse than saying so.
+    if (opts.inlineImages && /^image\//i.test(ct) && !isError) {
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > MAX_INLINE_IMAGE_BYTES) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `${line}\n\nImage is ${bytes.byteLength} bytes, over the ${MAX_INLINE_IMAGE_BYTES}-byte inline cap. Use artifact_url for a presigned link.`,
+            },
+          ],
+          isError,
+        };
+      }
+      const mimeType = ct.split(";")[0].trim();
+      return {
+        content: [
+          { type: "text", text: `${line}\n\n${mimeType}, ${bytes.byteLength} bytes:` },
+          { type: "image", data: toBase64(bytes), mimeType },
+        ],
+        isError,
+      };
+    }
     return {
       content: [
         {
           type: "text",
-          text: `${line}\n\nBinary response (${ct}, ${len} bytes) not inlined. For a finished film use poll_film's download_url; other artifacts are at GET /api/artifact/<key>.`,
+          text: `${line}\n\nBinary response (${ct}, ${len} bytes) not inlined. Use artifact_url for a short-lived presigned link to fetch or open it (an image can also be viewed inline with view_artifact); a finished film additionally carries poll_film's download_url.`,
         },
       ],
       isError,

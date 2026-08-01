@@ -88,7 +88,7 @@ async function handleRpc(msg: RpcMessage, env: McpEnv): Promise<unknown> {
           isError: true,
         });
       }
-      const result = await runTool(env, call);
+      const result = await runTool(env, call, { inlineImages: tool.inlineImages === true });
       return rpcResult(id, result);
     }
     default:

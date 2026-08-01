@@ -31,6 +31,27 @@ byte count.
   scheme), and each segment is percent-encoded so a key containing a space survives the URL while the
   slashes that make it a path are preserved.
 
+- **fix: the wire-visible version was wrong, and had been since v1.0.0.** `serverInfo.version` in the
+  MCP `initialize` reply is the ONLY version an MCP client can read off the wire, and it was
+  hardcoded `0.1.0` through v1.0.0 and v1.0.1 while `package.json` said otherwise. It now reads
+  `1.1.0`, so all three locations agree for the first time since v0.1.0. This sat directly on this
+  release's own thesis: an agent probing `serverInfo.version` to decide whether `view_artifact`
+  exists would have got the same answer before and after the release that added it. Guarded by
+  `tests/server-info-version.test.ts`, which fails if the literal and `package.json` ever disagree,
+  and which was **watched failing** on the reintroduced `0.1.0` before being trusted. Not derived
+  from `package.json` directly, because that needs a JSON import in the Worker bundle; that is a
+  build question and deliberately not scoped into a release.
+- **fix: lockfile drift.** v1.0.1 shipped with `package-lock.json` still at `1.0.0`. This is the
+  first release since v1.0.0 where the lockfile and `package.json` agree.
+
+**One type-level caveat, deliberately NOT treated as MAJOR.** `runTool`'s return type widened from
+`{ type: "text"; text: string }[]` to `McpContent[]`, and `./mcp-tools` is a public subpath export, so
+a TypeScript consumer reading `result.content[0].text` compiles under 1.0.1 and does not under 1.1.0.
+Checked rather than assumed: the one known consumer, `vivijure-cf`, reaches this package through the
+built Worker entry (`main` in `wrangler.mcp.toml.example`) and never touches `runTool`'s type, so
+nothing real breaks. Recorded here rather than left silent so a reader does not later find it and
+conclude a MAJOR was missed.
+
 **Why this is a separate release rather than part of #19.** #19 merged without a version bump, so for
 four commits there was no version number that could ever deliver the feature: `main` still declared
 `1.0.1`, which is exactly what npm already had. The code being on `main` is not the same as the code

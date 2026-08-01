@@ -17,7 +17,13 @@
 import type { McpEnv } from "./mcp-env.js";
 import { TOOLS, TOOLS_BY_NAME, runTool } from "./mcp-tools.js";
 
-const SERVER_INFO = { name: "vivijure-studio", version: "0.1.0" };
+// KEEP IN SYNC WITH package.json "version". This is the ONLY version an MCP client can read off the
+// wire (`serverInfo` in the initialize reply), and it sat at 0.1.0 from v1.0.0 through v1.0.1 while
+// package.json said otherwise -- so an agent probing serverInfo.version to decide whether a tool
+// exists got the same answer before and after a release that added one. It is not derived from
+// package.json because that would need a JSON import in the Worker bundle; the drift is prevented by
+// tests/server-info-version.test.ts instead, which fails if these two ever disagree.
+const SERVER_INFO = { name: "vivijure-studio", version: "1.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 function timingSafeEqual(a: string, b: string): boolean {

@@ -9,15 +9,34 @@
 // Forward-compatibility: the POST/PATCH tools forward their whole argument object as the request body
 // (minus any path parameter), so a new optional field in the contract is usable through the existing
 // tool without a code change here. The documented fields are listed in each inputSchema as hints.
+//
+// Bytes IN (cf#317): the studio's upload routes take a RAW body, not JSON, so a tool aiming at one
+// sets `rawBody` instead of `body`. The two are mutually exclusive BY TYPE rather than by a runtime
+// check, so a call carrying both cannot be constructed. This reverses the "no binary uploads" line
+// this file used to hold: it was true of the protocol for responses and never true of requests, and
+// an agent that could not bring in an image or an audio bed could not do what a human can.
 
 import type { McpEnv } from "./mcp-env.js";
 
-export interface StudioCall {
+/** A raw (non-JSON) request body: the bytes and the content-type header that describes them. */
+export interface StudioRawBody {
+  bytes: Uint8Array;
+  contentType: string;
+}
+
+/** One translated studio HTTP call.
+ *
+ *  `body` (JSON) and `rawBody` (bytes) are exclusive by CONSTRUCTION, not by a runtime guard: a
+ *  build() that set both would not compile, so "which body wins" is not a question runTool has to
+ *  answer and not a rule a future tool can forget. */
+export type StudioCall = {
   method: string;
   path: string;
   query?: Record<string, string | number | undefined>;
-  body?: unknown;
-}
+} & (
+  | { body?: unknown; rawBody?: never }
+  | { rawBody: StudioRawBody; body?: never }
+);
 
 // MCP content blocks a tool result may carry. Text is the default for every JSON reply; `image` is
 // what lets an agent actually SEE a rendered still instead of being told how many bytes it was
@@ -66,6 +85,60 @@ function keyPath(raw: string): string {
     throw new Error(`invalid artifact key '${raw}'`);
   }
   return raw.split("/").map(encodeURIComponent).join("/");
+}
+
+// cf#317: the MCP transport ceiling on an upload, applied to the DECODED length. This is OUR limit,
+// not the studio's: each upload route enforces its own byte cap and is the authority on it (the
+// studio answers 400 with its real number). Duplicating the studio's per-route caps here would be a
+// hand-maintained copy of a server-side rule, which is the class of thing that drifts silently, so
+// there is one honestly-labelled number instead.
+const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
+
+// Decode a base64 argument to bytes. `atob` is the Workers-runtime decoder; it throws on invalid
+// input, which is turned into a readable bad-argument error rather than a transport failure.
+function fromBase64(b64: string): Uint8Array {
+  let bin: string;
+  try {
+    bin = atob(b64.replace(/\s+/g, ""));
+  } catch {
+    throw new Error("data_base64 is not valid base64");
+  }
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Read the (data_base64, mime) pair every bytes-in tool takes, and refuse the shapes that would
+// otherwise reach the studio as a confidently wrong request.
+//
+// A `data:` URL prefix is REFUSED rather than stripped. Stripping it means the payload declares one
+// mime and the `mime` argument declares another, and silently preferring either is a wrong answer
+// that looks like an answer; the studio stores the content-type we send, so a mismatch would be
+// persisted onto the object.
+function rawBytesArg(args: Record<string, unknown>): StudioRawBody {
+  const raw = args.data_base64;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    throw new Error("missing required argument 'data_base64' (the file bytes, base64-encoded)");
+  }
+  if (/^data:/i.test(raw.trim())) {
+    throw new Error(
+      "data_base64 must be the base64 payload ALONE, with no 'data:<mime>;base64,' prefix -- " +
+        "pass the media type in the 'mime' argument instead",
+    );
+  }
+  const mime = reqStr(args, "mime");
+  // Shape only. WHICH types are allowed is the studio's rule, per route, and is not copied here.
+  if (!/^[a-z]+\/[a-z0-9.+-]+$/i.test(mime)) {
+    throw new Error(`'mime' must be a media type like 'image/png', got '${mime}'`);
+  }
+  const bytes = fromBase64(raw);
+  if (bytes.byteLength === 0) throw new Error("data_base64 decoded to zero bytes");
+  if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `decoded body is ${bytes.byteLength} bytes, over this MCP's ${MAX_UPLOAD_BYTES}-byte transport ceiling`,
+    );
+  }
+  return { bytes, contentType: mime };
 }
 
 // The body for a POST/PATCH tool: the whole args object minus the named path params, so any extra
@@ -576,6 +649,53 @@ export const TOOLS: McpTool[] = [
     }),
   },
 
+  // --- bytes IN (cf#317: bring your own image or audio) ------------------------
+  // These two are the ONLY way an agent gets its own bytes into the studio. `studio_request` cannot
+  // stand in for them: it sends application/json, and all three of the studio's upload routes read a
+  // raw body and reject a JSON content-type, so those routes were not reachable by any MCP means.
+  {
+    name: "upload_image",
+    description:
+      "POST /api/upload. BRING AN IMAGE INTO THE STUDIO (the bytes-in door for pictures). Pass the " +
+      "image as base64 in `data_base64` plus its `mime`; returns { key, mime, size }. Use the " +
+      "returned key as `from_chat_artifact` on set_cast_portrait / add_cast_ref / add_cast_source -- " +
+      "that argument copies from ANY studio artifact key, not only a `chat` one, and it is the path " +
+      "that works (the `key` + `mime` form of those tools only accepts a key already staged under " +
+      "cast/<internal id>/). The studio takes png/jpeg/webp/gif here and is the authority on that; " +
+      "note CAST media is narrower and refuses gif, so upload png/jpeg/webp for anything going onto " +
+      "a cast member. Pass the base64 payload ALONE, with no 'data:...;base64,' prefix.",
+    inputSchema: OBJ(
+      {
+        data_base64: STR("The image bytes, base64-encoded, with no data: URL prefix."),
+        mime: STR("The image media type, e.g. 'image/png' | 'image/jpeg' | 'image/webp'."),
+      },
+      ["data_base64", "mime"],
+    ),
+    build: (a) => ({ method: "POST", path: "/api/upload", rawBody: rawBytesArg(a) }),
+  },
+  {
+    name: "upload_audio",
+    description:
+      "POST /api/storyboard/audio-upload. BRING AUDIO INTO THE STUDIO (the bytes-in door for sound): " +
+      "a music bed, a pre-recorded narration, any track you want muxed onto a film. Pass the audio " +
+      "as base64 in `data_base64` plus its `mime`; returns { key, mime, size }. That key is " +
+      "submit_film's `audio_key` and add_render_audio's `audioKey`. The studio takes " +
+      "mp3/wav/aac/m4a/ogg/webm here and is the authority on that. Pass the base64 payload ALONE, " +
+      "with no 'data:...;base64,' prefix.",
+    inputSchema: OBJ(
+      {
+        data_base64: STR("The audio bytes, base64-encoded, with no data: URL prefix."),
+        mime: STR("The audio media type, e.g. 'audio/mpeg' | 'audio/wav' | 'audio/mp4'."),
+      },
+      ["data_base64", "mime"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/storyboard/audio-upload",
+      rawBody: rawBytesArg(a),
+    }),
+  },
+
   // --- artifacts (cf#317: see what you made) -----------------------------------
   {
     name: "view_artifact",
@@ -690,6 +810,16 @@ export function studioUrl(env: McpEnv, call: StudioCall): string {
 // larger is refused honestly and pointed at artifact_url rather than silently truncated.
 const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
 
+// A Uint8Array is not a BodyInit under @cloudflare/workers-types; an ArrayBuffer is. Return the
+// view's own buffer when the view spans it exactly (what fromBase64 always produces) and copy only
+// when it does not, so a caller passing a SUBARRAY cannot silently send the bytes around it.
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer as ArrayBuffer;
+  }
+  return bytes.slice().buffer as ArrayBuffer;
+}
+
 // Base64 without Buffer (Workers runtime). Chunked because String.fromCharCode.apply on a multi-MB
 // array overflows the call stack.
 function toBase64(bytes: Uint8Array): string {
@@ -722,7 +852,14 @@ export async function runTool(
 
   const headers: Record<string, string> = { Authorization: `Bearer ${env.STUDIO_API_TOKEN}` };
   const init: RequestInit = { method: call.method, headers };
-  if (call.body !== undefined && call.method !== "GET" && call.method !== "DELETE") {
+  const sendsBody = call.method !== "GET" && call.method !== "DELETE";
+  if (call.rawBody !== undefined && sendsBody) {
+    // cf#317: a bytes-in route reads the RAW request body and dispatches on the content-type header,
+    // so the bytes go on the wire as themselves. JSON-encoding them is what made these routes
+    // unreachable through the escape hatch.
+    headers["Content-Type"] = call.rawBody.contentType;
+    init.body = toArrayBuffer(call.rawBody.bytes);
+  } else if (call.body !== undefined && sendsBody) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(call.body);
   }

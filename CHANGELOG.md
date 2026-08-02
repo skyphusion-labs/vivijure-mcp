@@ -23,6 +23,35 @@ the why behind each release. Newest first.
 - **fix(mcp): `list_renders` published the wrong default.** Both its description and its schema said
   "default 100"; the studio's `DEFAULT_RENDERS_LIMIT` is **50** and `CONTRACT.md` 2.25 says 50. An
   agent sizing a page from the tool description was reasoning about a number the studio does not use.
+- **feat(mcp): `upload_image` and `upload_audio` -- bytes IN (cf#317).** The studio's upload routes
+  read a **raw** request body and dispatch on the content-type header, and every path through
+  `runTool` sent `application/json`. So `POST /api/upload`, `POST /api/storyboard/audio-upload` and
+  `POST /api/storyboard/character-ref` were **not reachable by any MCP means** -- `studio_request`
+  looked like the answer and answered `400` on the content-type before reading anything else. An
+  agent could generate an image with `chat` and could not bring one in, and could not bring in audio
+  at all. That gap is asserted by a test against the shipped `studio_request`, not described.
+  - `upload_image` -> `POST /api/upload`; `upload_audio` -> `POST /api/storyboard/audio-upload`.
+    Both take `data_base64` + `mime` and return the studio's `{ key, mime, size }`.
+  - **This reverses a stated design position.** `docs/mcp.md` said *"No binary uploads either ...
+    nothing is ever base64-smuggled through a tool call."* That was true of the PROTOCOL for
+    responses and never true of requests, and it is reversed here under the cf#317 ruling that an
+    agent must reach what a human can. The bound it was protecting is kept: exactly two named tools,
+    one transport ceiling, and `studio_request` still cannot send bytes.
+  - A `data:` URL prefix is **refused, not stripped** -- the payload's declared type and the `mime`
+    argument can disagree, and the studio persists the content-type we send, so quietly preferring
+    either would write a wrong type onto the object.
+  - The 32 MB ceiling is labelled as **this MCP's transport limit, not the studio's rule**. Each
+    route enforces its own cap and answers `400` with its real number; copying those numbers here
+    would be a hand-maintained duplicate of a server-side rule.
+- **`StudioCall` now carries an optional `rawBody`, exclusive with `body` BY TYPE.** A build() that
+  set both does not compile (proven by a negative control run against the compiler), so "which body
+  wins" is not a rule a future tool can forget.
+- **fix(docs): `docs/mcp.md` carried two disagreeing tool counts** -- "all 19 tools" in the contents
+  list and "Twenty-one tools" in the reference heading, in the same file, neither matching the
+  catalog. Both hand-maintained. There is now ONE count, and `tests/docs-tool-catalog.test.ts`
+  derives it from `TOOLS` along with the group count and the presence of every tool name, so the
+  reference cannot drift from the catalog silently. Watched failing on a wrong count before it was
+  trusted.
 
 ## v1.1.0 -- 2026-08-02
 

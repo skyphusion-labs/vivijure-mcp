@@ -181,12 +181,15 @@ Rules that hold for every tool, so the reference below does not repeat them:
   them through `artifact_url`. The inlining is opt-in per tool: `studio_request` still summarizes
   everything binary, deliberately, so a stray call cannot push megabytes through the transport.
   Non-JSON text is capped at 4000 characters.
-- **No binary uploads either.** To set a portrait, generate the image with `chat` and pass the
-  returned artifact key to `set_cast_portrait`; nothing is ever base64-smuggled through a tool call.
+- **Bytes go IN through two named tools, and nowhere else.** `upload_image` and `upload_audio`
+  take a base64 payload plus its media type and send it to the studio as a raw body. Every other
+  tool, `studio_request` included, sends `application/json` -- which is why the escape hatch could
+  never reach an upload route, however correct the path looked. Uploading is deliberately narrow:
+  two tools, one transport ceiling, no smuggling through the generic hatch.
 
 ## Tool reference
 
-**31** tools in **6** groups. Arguments marked **(required)** must be present; everything else is
+**42** tools in **9** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -217,7 +220,11 @@ storyboard.
 
 **`list_renders`** -- `GET /api/storyboard/renders`. The render library (history rows).
 - `project_id`: filter to one project's renders.
-- `limit`: max rows (default 100).
+- `limit`: max rows (default 50).
+
+**`render_tags`** -- `GET /api/storyboard/renders/tags`. No arguments. Every tag already in use
+across the library. Read this before setting tags with `update_render`, so an agent reuses the
+vocabulary a human established instead of starting a parallel one.
 
 ### Cast
 
@@ -236,13 +243,13 @@ seed the render pipeline keys on) by copying an image that `chat` already produc
 - `id` (required): the cast member's public id.
 - `from_chat_artifact` (required): the `output_artifact.key` returned by a `chat` image call.
 
-**`from_chat_artifact` copies from ANY studio artifact key, not only a `chat` one** -- the name
-predates the other sources. A keyframe key, a generated ref, an uploaded image: all valid.
+Two ways to get a key here. Generate the image with `chat` and pass its `output_artifact.key`, or
+bring your own with `upload_image` and pass the key that returns: **`from_chat_artifact` copies from
+any studio artifact key, not only a `chat` one.** The name predates the upload path.
 
-> **The studio's sibling `{ key, mime }` form is narrower than CONTRACT.md 2.7 implies.** It requires
-> a key already staged under `cast/<internal id>/`, so a general staged key is refused there with
-> `400 key must be a safe staged path under this cast member`. These tools use `from_chat_artifact`,
-> which copies the object in and stages it correctly.
+The sibling `key` + `mime` form documented in CONTRACT.md is narrower than it looks -- the studio
+requires a key already staged under `cast/<internal id>/`, which is not what `POST /api/upload`
+returns -- so `from_chat_artifact` is the form these tools use.
 
 **`delete_cast`** -- `DELETE /api/cast/:id`. Delete a member and reclaim its R2 artifacts. Irreversible.
 - `id` (required): the cast member's public id.
@@ -296,6 +303,70 @@ trained **once** and reused across every project.
 
 `lora_status` is `idle` | `training` | `ready` | `failed`. **Only a `ready` member contributes a real
 identity LoRA to a render**; binding an untrained one is how a film ships generic-looking characters.
+
+### Projects and the render library (write)
+
+**`create_project`** -- `POST /api/storyboard/projects`. Create a project.
+- `name` (required): the project's display name.
+- `prefs`: optional per-project preferences object.
+
+Returns `201 { project }`. Its `id` is the public id every other project tool takes.
+
+**`save_storyboard`** -- `POST /api/storyboard/projects/:id/storyboard`. Persist a storyboard as the
+project's **last saved storyboard**, which is what `get_project` returns.
+- `id` (required): the project's public id.
+- `storyboard` (required): the storyboard object.
+
+The storyboard is stored opaquely; it is validated at `preflight` / render time, not here.
+
+**`update_project`** -- `PATCH /api/storyboard/projects/:id`. Update project metadata.
+- `id` (required): the project's public id.
+- `name`, `prefs`, `storyboard`: send only what you are changing.
+
+> **The studio applies EITHER `storyboard` OR `name`/`prefs`, never both in one call.** If
+> `storyboard` is present the other two are ignored, silently. Send them as two calls, or use
+> `save_storyboard`, which only ever does the one thing.
+
+**`delete_project`** -- `DELETE /api/storyboard/projects/:id`. Irreversible. `200 { ok, deleted }`.
+- `id` (required): the project's public id.
+
+**`update_render`** -- `PATCH /api/storyboard/renders/:id`. Organize a library row.
+- `id` (required): the render row's public id (from `list_renders`).
+- `label`, `lockedShots`, `folderPath`, `tags`: only the fields you send are applied.
+
+Unlike most studio replies this one is the `RenderRow` **itself**, not wrapped in a resource key.
+
+**`delete_render`** -- `DELETE /api/storyboard/renders/:id`. Irreversible. `200 { ok: true }`.
+- `id` (required): the render row's public id.
+
+### Finishing a completed render
+
+Two synchronous routes that operate on a render that is already `COMPLETED`. They do not start a job
+and there is nothing to poll.
+
+**`add_render_audio`** -- `POST /api/storyboard/renders/:id/add-audio`. Mux a staged bed onto a
+finished render, entirely off the GPU.
+- `id` (required): the render row's public id.
+- `audioKey` (required): a staged audio key.
+
+`200 { ok: true, output_key }`, or `422` with the reason if the mux fails.
+
+**`add_render_narration`** -- `POST /api/storyboard/renders/:id/add-narration`. **Spends** (TTS
+inference, not GPU render time). Generates a narration track from text, then muxes it.
+- `id` (required): the render row's public id.
+- `text` (required): the narration script.
+- `module`, `config`: optional specific narration module and its config.
+
+The studio generates AND muxes inside the one request, so this call can take tens of seconds.
+`200 { ok: true, output_key, module, label }`, `422` on failure, or `504` if generation does not
+finish inside the studio's bounded wait -- **a `504` here means try again, not that the render is
+broken.**
+
+> **The other finishing routes have no curated tool on purpose.** `finalize`, `animate-cloud`,
+> `animate-hybrid`, `regen-shot`, `scatter` and `render-from-keyframes` each START a new render job,
+> and the only route that polls one is `GET /api/storyboard/render/:jobId`. That poll is part of the
+> render-door reconciliation in vivijure-cf#334, so a curated submit tool would ship half a
+> capability and freeze a door that is being changed. Use `studio_request` for them meanwhile.
 
 ### Planning (LLM calls; costs inference, not GPU render time)
 
@@ -395,6 +466,35 @@ Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Phases, in order
 `failed`, the payload carries the real per-shot error: the studio never silently ships an
 unfinished film.
 
+### Bytes in (bring your own image or audio)
+
+The studio's upload routes read a **raw** request body and dispatch on the content-type header, so
+they are the one class `studio_request` cannot serve: it sends JSON, and JSON is refused there. These
+two tools are how an agent brings in material it did not generate.
+
+**`upload_image`** -- `POST /api/upload`. Store an image and get a key back.
+- `data_base64` (required): the image bytes, base64-encoded, with **no** `data:` URL prefix.
+- `mime` (required): the media type, e.g. `image/png`.
+
+Returns `{ key, mime, size }`. Feed that `key` to `set_cast_portrait`, `add_cast_ref` or
+`add_cast_source` as `from_chat_artifact`, or into a bundle's `characterRefs`. The studio accepts
+png/jpeg/webp/gif here; **cast media is narrower and refuses gif**, so use png/jpeg/webp for anything
+going onto a cast member.
+
+**`upload_audio`** -- `POST /api/storyboard/audio-upload`. Store an audio track and get a key back.
+- `data_base64` (required): the audio bytes, base64-encoded, no `data:` prefix.
+- `mime` (required): the media type, e.g. `audio/mpeg`.
+
+Returns `{ key, mime, size }`. That key is `submit_film`'s `audio_key` and `add_render_audio`'s
+`audioKey`.
+
+> **A `data:` URL prefix is refused, not stripped.** The payload's declared type and the `mime`
+> argument could disagree, and the studio persists the content-type we send onto the object, so
+> quietly preferring one would write a wrong type that looks right. Pass the payload alone.
+
+Both refuse a decoded body over **32 MB**, which is this MCP's transport ceiling and not the
+studio's rule: each route enforces its own cap and answers `400` with its real number.
+
 ### Artifacts (see what you made)
 
 **`view_artifact`** -- `GET /api/artifact/<key>`. Look at an artifact. An **image** is returned
@@ -423,8 +523,7 @@ this tool returns a `404` as data, which is the honest answer rather than a brok
 ### Escape hatch
 
 **`studio_request`** -- any studio route in [CONTRACT.md](CONTRACT.md) that has no curated tool
-(render/clips, scatter, renders PATCH/DELETE, prefs, cast LoRA training, cast bundle
-import/export, ...).
+(render/clips, scatter, prefs, module install-config, cast bundle import/export, ...).
 - `method` (required): one of `GET`, `POST`, `PATCH`, `PUT`, `DELETE`.
 - `path` (required): the studio path, starting with `/`, e.g. `/api/storyboard/renders/tags`.
 - `query`: optional query params (string/number values).
@@ -432,6 +531,12 @@ import/export, ...).
 
 Same bearer, same result formatting, same binary summarization as every other tool. It is a raw
 pass-through: anything the studio bearer can do, this can do, including spend and delete routes.
+
+**One documented exception, and it is a class rather than a route.** `studio_request` always sends
+`application/json`, so it cannot reach a route that reads a RAW body -- `/api/upload`,
+`/api/storyboard/audio-upload`, `/api/storyboard/character-ref`, and the binary form of the cast
+media routes. Those answer `400` on the content-type before they look at anything else. Use
+`upload_image` / `upload_audio` for the first two; the third has no tool yet.
 
 ## A render, end to end
 

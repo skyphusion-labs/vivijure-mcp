@@ -18,7 +18,7 @@ what is written here. If a step does not work, see [Troubleshooting](#troublesho
 - [Check that it works](#check-that-it-works)
 - [Connect your agent](#connect-your-agent)
 - [How tool calls behave](#how-tool-calls-behave)
-- [Tool reference](#tool-reference) (all 19 tools, with arguments)
+- [Tool reference](#tool-reference) (every tool, with arguments)
 - [A render, end to end](#a-render-end-to-end)
 - [Security boundary](#security-boundary)
 - [Troubleshooting](#troubleshooting)
@@ -181,12 +181,15 @@ Rules that hold for every tool, so the reference below does not repeat them:
   them through `artifact_url`. The inlining is opt-in per tool: `studio_request` still summarizes
   everything binary, deliberately, so a stray call cannot push megabytes through the transport.
   Non-JSON text is capped at 4000 characters.
-- **No binary uploads either.** To set a portrait, generate the image with `chat` and pass the
-  returned artifact key to `set_cast_portrait`; nothing is ever base64-smuggled through a tool call.
+- **Bytes go IN through two named tools, and nowhere else.** `upload_image` and `upload_audio`
+  take a base64 payload plus its media type and send it to the studio as a raw body. Every other
+  tool, `studio_request` included, sends `application/json` -- which is why the escape hatch could
+  never reach an upload route, however correct the path looked. Uploading is deliberately narrow:
+  two tools, one transport ceiling, no smuggling through the generic hatch.
 
 ## Tool reference
 
-Twenty-one tools in five groups. Arguments marked **(required)** must be present; everything else is
+**23** tools in **7** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -236,8 +239,13 @@ seed the render pipeline keys on) by copying an image that `chat` already produc
 - `id` (required): the cast member's public id.
 - `from_chat_artifact` (required): the `output_artifact.key` returned by a `chat` image call.
 
-The flow is always: `chat` with an image model, take `output_artifact.key` from its reply, pass it
-here. There is no direct upload path over MCP.
+Two ways to get a key here. Generate the image with `chat` and pass its `output_artifact.key`, or
+bring your own with `upload_image` and pass the key that returns: **`from_chat_artifact` copies from
+any studio artifact key, not only a `chat` one.** The name predates the upload path.
+
+The sibling `key` + `mime` form documented in CONTRACT.md is narrower than it looks -- the studio
+requires a key already staged under `cast/<internal id>/`, which is not what `POST /api/upload`
+returns -- so `from_chat_artifact` is the form these tools use.
 
 ### Planning (LLM calls; costs inference, not GPU render time)
 
@@ -337,6 +345,35 @@ Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Phases, in order
 `failed`, the payload carries the real per-shot error: the studio never silently ships an
 unfinished film.
 
+### Bytes in (bring your own image or audio)
+
+The studio's upload routes read a **raw** request body and dispatch on the content-type header, so
+they are the one class `studio_request` cannot serve: it sends JSON, and JSON is refused there. These
+two tools are how an agent brings in material it did not generate.
+
+**`upload_image`** -- `POST /api/upload`. Store an image and get a key back.
+- `data_base64` (required): the image bytes, base64-encoded, with **no** `data:` URL prefix.
+- `mime` (required): the media type, e.g. `image/png`.
+
+Returns `{ key, mime, size }`. Feed that `key` to `set_cast_portrait`, `add_cast_ref` or
+`add_cast_source` as `from_chat_artifact`, or into a bundle's `characterRefs`. The studio accepts
+png/jpeg/webp/gif here; **cast media is narrower and refuses gif**, so use png/jpeg/webp for anything
+going onto a cast member.
+
+**`upload_audio`** -- `POST /api/storyboard/audio-upload`. Store an audio track and get a key back.
+- `data_base64` (required): the audio bytes, base64-encoded, no `data:` prefix.
+- `mime` (required): the media type, e.g. `audio/mpeg`.
+
+Returns `{ key, mime, size }`. That key is `submit_film`'s `audio_key` and `add_render_audio`'s
+`audioKey`.
+
+> **A `data:` URL prefix is refused, not stripped.** The payload's declared type and the `mime`
+> argument could disagree, and the studio persists the content-type we send onto the object, so
+> quietly preferring one would write a wrong type that looks right. Pass the payload alone.
+
+Both refuse a decoded body over **32 MB**, which is this MCP's transport ceiling and not the
+studio's rule: each route enforces its own cap and answers `400` with its real number.
+
 ### Artifacts (see what you made)
 
 **`view_artifact`** -- `GET /api/artifact/<key>`. Look at an artifact. An **image** is returned
@@ -365,8 +402,7 @@ this tool returns a `404` as data, which is the honest answer rather than a brok
 ### Escape hatch
 
 **`studio_request`** -- any studio route in [CONTRACT.md](CONTRACT.md) that has no curated tool
-(render/clips, scatter, renders PATCH/DELETE, prefs, cast LoRA training, cast bundle
-import/export, ...).
+(render/clips, scatter, prefs, module install-config, cast bundle import/export, ...).
 - `method` (required): one of `GET`, `POST`, `PATCH`, `PUT`, `DELETE`.
 - `path` (required): the studio path, starting with `/`, e.g. `/api/storyboard/renders/tags`.
 - `query`: optional query params (string/number values).
@@ -374,6 +410,12 @@ import/export, ...).
 
 Same bearer, same result formatting, same binary summarization as every other tool. It is a raw
 pass-through: anything the studio bearer can do, this can do, including spend and delete routes.
+
+**One documented exception, and it is a class rather than a route.** `studio_request` always sends
+`application/json`, so it cannot reach a route that reads a RAW body -- `/api/upload`,
+`/api/storyboard/audio-upload`, `/api/storyboard/character-ref`, and the binary form of the cast
+media routes. Those answer `400` on the content-type before they look at anything else. Use
+`upload_image` / `upload_audio` for the first two; the third has no tool yet.
 
 ## A render, end to end
 

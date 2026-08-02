@@ -210,10 +210,10 @@ export const TOOLS: McpTool[] = [
     name: "list_renders",
     description:
       "GET /api/storyboard/renders. The render library (history rows). Optional project_id filter " +
-      "and limit (default 100).",
+      "and limit (default 50).",
     inputSchema: OBJ({
       project_id: NUM("Filter to one project's renders."),
-      limit: NUM("Max rows (default 100)."),
+      limit: NUM("Max rows (default 50)."),
     }),
     build: (a) => ({
       method: "GET",
@@ -223,6 +223,189 @@ export const TOOLS: McpTool[] = [
         limit: a.limit as number | undefined,
       },
     }),
+  },
+
+  // --- project + library WRITE (cf#317) ---------------------------------------
+  {
+    name: "create_project",
+    description:
+      "POST /api/storyboard/projects. CREATE a storyboard project. Body: { name (req), prefs? }. " +
+      "Returns 201 { project } whose `id` is the public id every other project tool takes. Until " +
+      "this existed an agent could list and read projects and could not make one, so a film had to " +
+      "start from a project a human had already created.",
+    inputSchema: OBJ(
+      {
+        name: STR("Project display name."),
+        prefs: { type: "object", description: "Optional per-project preferences object." },
+      },
+      ["name"],
+    ),
+    build: (a) => {
+      reqStr(a, "name");
+      return { method: "POST", path: "/api/storyboard/projects", body: bodyWithout(a) };
+    },
+  },
+  {
+    name: "save_storyboard",
+    description:
+      "POST /api/storyboard/projects/:id/storyboard. SAVE a storyboard as the project's last saved " +
+      "storyboard -- the one `get_project` returns. Body: { storyboard (req) }. This is the write " +
+      "side of the promise get_project's own description makes; without it an agent could plan and " +
+      "refine a storyboard and never persist it, so the next call read whatever a human last saved. " +
+      "The storyboard is stored opaquely here and is validated at `preflight` / render time, not now.",
+    inputSchema: OBJ(
+      {
+        id: STR("Project public id."),
+        storyboard: { type: "object", description: "The storyboard object to persist." },
+      },
+      ["id", "storyboard"],
+    ),
+    build: (a) => {
+      if (typeof a.storyboard !== "object" || a.storyboard === null) {
+        throw new Error("missing required argument 'storyboard'");
+      }
+      return {
+        method: "POST",
+        path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}/storyboard`,
+        body: bodyWithout(a, "id"),
+      };
+    },
+  },
+  {
+    name: "update_project",
+    description:
+      "PATCH /api/storyboard/projects/:id. Update a project's metadata. Body: { name?, prefs?, " +
+      "storyboard? }. NOTE THE STUDIO'S EITHER/OR: if `storyboard` is present the route saves the " +
+      "storyboard and does NOT apply `name` or `prefs` in the same call. Send metadata and a " +
+      "storyboard as two calls, or use `save_storyboard` for the storyboard, which is the route " +
+      "that only ever does one thing.",
+    inputSchema: OBJ(
+      {
+        id: STR("Project public id."),
+        name: STR("New display name."),
+        prefs: { type: "object", description: "Replacement preferences object." },
+        storyboard: {
+          type: "object",
+          description: "If present, this is saved and name/prefs are ignored for this call.",
+        },
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "PATCH",
+      path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}`,
+      body: bodyWithout(a, "id"),
+    }),
+  },
+  {
+    name: "delete_project",
+    description:
+      "DELETE /api/storyboard/projects/:id. Delete a project. Returns { ok: true, deleted: <id> }, " +
+      "or 404 if the id is unknown. IRREVERSIBLE.",
+    inputSchema: OBJ({ id: STR("Project public id.") }, ["id"]),
+    build: (a) => ({
+      method: "DELETE",
+      path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+  {
+    name: "render_tags",
+    description:
+      "GET /api/storyboard/renders/tags. Every tag in use across the render library, as " +
+      "{ tags: string[] }. Read this before setting tags with `update_render` so an agent reuses " +
+      "the vocabulary a human already established instead of inventing a parallel one.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/storyboard/renders/tags" }),
+  },
+  {
+    name: "update_render",
+    description:
+      "PATCH /api/storyboard/renders/:id. Organize a render-library row: { label?, lockedShots?, " +
+      "folderPath?, tags? }. Only the fields you send are applied, each normalized by the studio. " +
+      "Unlike most studio replies this one is the RenderRow ITSELF, not wrapped in a resource key. " +
+      "404 if the id is unknown.",
+    inputSchema: OBJ(
+      {
+        id: STR("Render row public id (from list_renders)."),
+        label: STR("Human label for the row; null or empty clears it."),
+        lockedShots: ARR("Shot ids to keep pinned across re-renders."),
+        folderPath: STR("Library folder path for the row."),
+        tags: ARR("Tags for the row (see render_tags for the vocabulary in use)."),
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "PATCH",
+      path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}`,
+      body: bodyWithout(a, "id"),
+    }),
+  },
+  {
+    name: "delete_render",
+    description:
+      "DELETE /api/storyboard/renders/:id. Remove a render-library row. Returns { ok: true }, or " +
+      "404 if the id is unknown. IRREVERSIBLE.",
+    inputSchema: OBJ({ id: STR("Render row public id (from list_renders).") }, ["id"]),
+    build: (a) => ({
+      method: "DELETE",
+      path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+
+  // --- finishing a COMPLETED render (cf#317) -----------------------------------
+  // Only the two synchronous, door-independent finishing routes are curated here. finalize /
+  // animate-cloud / animate-hybrid / regen-shot each START a new render job whose only poll route is
+  // GET /api/storyboard/render/:jobId, which cf#334 is reconciling; a submit tool with no poll tool
+  // is half a capability, so those stay on studio_request until that lands.
+  {
+    name: "add_render_audio",
+    description:
+      "POST /api/storyboard/renders/:id/add-audio. Mux a staged audio bed onto a FINISHED render, " +
+      "off the GPU. Body: { audioKey (req) } -- the key from `upload_audio` or a generated bed. " +
+      "Returns { ok: true, output_key }; a mux failure is a 422 with the reason. Synchronous: no " +
+      "job to poll.",
+    inputSchema: OBJ(
+      {
+        id: STR("Render row public id (from list_renders)."),
+        audioKey: STR("Staged audio key to mux onto the film."),
+      },
+      ["id", "audioKey"],
+    ),
+    build: (a) => {
+      reqStr(a, "audioKey");
+      return {
+        method: "POST",
+        path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}/add-audio`,
+        body: bodyWithout(a, "id"),
+      };
+    },
+  },
+  {
+    name: "add_render_narration",
+    description:
+      "POST /api/storyboard/renders/:id/add-narration. Generate a narration track from text and mux " +
+      "it onto a FINISHED render. THIS SPENDS (TTS inference, not GPU render). Body: { text (req), " +
+      "module?, config? }. The studio generates and muxes inside the one request, so this call can " +
+      "take tens of seconds; it answers { ok: true, output_key, module, label }, 422 if generation " +
+      "or mux fails, or 504 if generation does not finish inside the studio's bounded wait. A 504 " +
+      "means TRY AGAIN, not that the render is broken.",
+    inputSchema: OBJ(
+      {
+        id: STR("Render row public id (from list_renders)."),
+        text: STR("The narration script to speak."),
+        module: STR("Optional specific narration module name (see studio_modules)."),
+        config: { type: "object", description: "Optional module config for the narration run." },
+      },
+      ["id", "text"],
+    ),
+    build: (a) => {
+      reqStr(a, "text");
+      return {
+        method: "POST",
+        path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}/add-narration`,
+        body: bodyWithout(a, "id"),
+      };
+    },
   },
 
   // --- cast -------------------------------------------------------------------

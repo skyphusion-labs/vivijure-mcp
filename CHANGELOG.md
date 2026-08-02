@@ -6,6 +6,22 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **feat(mcp): cast and identity, ten tools (cf#317).** Identity is step one of driving a film and an
+  agent could only create, read and rename a cast member. It could not add or remove a training
+  reference, add or remove a source photo, ask the studio to generate a reference set, train the
+  identity LoRA, read the training state, clear a portrait, or delete a member. `delete_cast`,
+  `clear_cast_portrait`, `add_cast_ref`, `remove_cast_ref`, `add_cast_source`, `remove_cast_source`,
+  `generate_cast_refs`, `poll_cast_refs`, `train_cast_lora`, `cast_lora_status`.
+- **The two key-removal routes are PATH-shaped, and that is forced, not preferred.** The studio also
+  accepts the key in a JSON body, but `runTool` never sends a body on a `DELETE`, so that form is
+  unreachable from this MCP. `DELETE /api/cast/:id/refs/*refKey` and its source sibling are the only
+  reachable form, and both were absent from `CONTRACT.md` -- the escape hatch could not have been
+  pointed at them either.
+- **fix(docs/tool): `set_cast_portrait` described a chat-only path that was never the constraint.**
+  `from_chat_artifact` copies from ANY studio artifact key. Meanwhile the sibling `{ key, mime }`
+  form is NARROWER than CONTRACT.md 2.7 says: it requires a key already staged under
+  `cast/<internal id>/`, so a general staged key is refused. Both facts now sit in the tool
+  description, where an agent reads them.
 - **feat(mcp): project and render-library WRITE, plus the two door-independent finishing routes
   (cf#317).** An agent could list and read projects and renders and could not create, save, organize
   or delete one. Nine tools: `create_project`, `save_storyboard`, `update_project`, `delete_project`,

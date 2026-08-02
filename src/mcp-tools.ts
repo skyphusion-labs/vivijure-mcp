@@ -444,10 +444,12 @@ export const TOOLS: McpTool[] = [
   {
     name: "set_cast_portrait",
     description:
-      "POST /api/cast/:id/portrait. Set a cast member's portrait (the identity seed) by copying an " +
-      "image previously produced by `chat` (an image model returns output_artifact.key). Body: " +
-      "{ from_chat_artifact (req) }. This avoids binary upload: generate the portrait with `chat`, " +
-      "then pass its artifact key here.",
+      "POST /api/cast/:id/portrait. Set a cast member's portrait (the identity seed). Body: " +
+      "{ from_chat_artifact (req) } -- despite the name this copies from ANY studio artifact key, " +
+      "not only a `chat` one, so it takes a key from `chat` (output_artifact.key) or from a keyframe " +
+      "or ref you already have. The studio's sibling { key, mime } form is NARROWER than CONTRACT.md " +
+      "implies: it requires a key already staged under cast/<internal id>/, so a general staged key " +
+      "is refused there. Use this form.",
     inputSchema: OBJ(
       {
         id: STR("Cast member public id."),
@@ -463,6 +465,191 @@ export const TOOLS: McpTool[] = [
         body: bodyWithout(a, "id"),
       };
     },
+  },
+
+  {
+    name: "delete_cast",
+    description:
+      "DELETE /api/cast/:id. Delete a cast member and reclaim its R2 artifacts (portrait, refs, " +
+      "sources). Returns { ok: true, deleted: <id> }, or 404 if the id is unknown. IRREVERSIBLE, " +
+      "and it takes the trained LoRA's binding with it.",
+    inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
+    build: (a) => ({ method: "DELETE", path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}` }),
+  },
+  {
+    name: "clear_cast_portrait",
+    description:
+      "DELETE /api/cast/:id/portrait. Clear a cast member's portrait and delete the R2 object " +
+      "(best-effort, so a missing object never blocks the clear). Returns { cast }.",
+    inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
+    build: (a) => ({
+      method: "DELETE",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/portrait`,
+    }),
+  },
+  {
+    name: "add_cast_ref",
+    description:
+      "POST /api/cast/:id/ref. Add a LoRA TRAINING REFERENCE image to a cast member -- the set " +
+      "`train_cast_lora` learns the character's face from. Body: { from_chat_artifact (req) }, an " +
+      "existing studio artifact key (from `chat`, from `upload_image`, or any artifact you can " +
+      "name); the studio copies it under cast/<id>/refs/. Returns { cast }. Use " +
+      "`generate_cast_refs` instead when you want the studio to SYNTHESIZE a set from the portrait.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        from_chat_artifact: STR("An existing studio artifact key to copy in as a reference."),
+      },
+      ["id", "from_chat_artifact"],
+    ),
+    build: (a) => {
+      reqStr(a, "from_chat_artifact");
+      return {
+        method: "POST",
+        path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/ref`,
+        body: bodyWithout(a, "id"),
+      };
+    },
+  },
+  {
+    name: "remove_cast_ref",
+    description:
+      "DELETE /api/cast/:id/refs/<refKey>. Remove one training reference from a cast member and " +
+      "delete its R2 object. `ref_key` is the full key as `get_cast` reports it (e.g. " +
+      "'cast/7/refs/<uuid>.png'); it spans slashes, so it goes in the PATH. The studio also accepts " +
+      "the key in a JSON body on /ref, but no MCP tool can use that: a DELETE never carries a body " +
+      "here. 404 if the key is not in this member's set.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        ref_key: STR("The reference key to remove, as reported by get_cast."),
+      },
+      ["id", "ref_key"],
+    ),
+    build: (a) => ({
+      method: "DELETE",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/refs/${keyPath(reqStr(a, "ref_key"))}`,
+    }),
+  },
+  {
+    name: "add_cast_source",
+    description:
+      "POST /api/cast/:id/source. Add a SOURCE photo to a cast member: extra conditioning material, " +
+      "distinct from the training reference set. Body: { from_chat_artifact (req) }, an existing " +
+      "studio artifact key (see `upload_image` to bring your own bytes in). Source keys are what " +
+      "`generate_cast_refs` takes as `source_keys`. Returns { cast }.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        from_chat_artifact: STR("An existing studio artifact key to copy in as a source photo."),
+      },
+      ["id", "from_chat_artifact"],
+    ),
+    build: (a) => {
+      reqStr(a, "from_chat_artifact");
+      return {
+        method: "POST",
+        path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/source`,
+        body: bodyWithout(a, "id"),
+      };
+    },
+  },
+  {
+    name: "remove_cast_source",
+    description:
+      "DELETE /api/cast/:id/source/<sourceKey>. Remove one source photo and delete its R2 object. " +
+      "`source_key` is the full key as `get_cast` reports it; it spans slashes, so it goes in the " +
+      "PATH (a DELETE carries no body here). 404 if the key is not in this member's set.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        source_key: STR("The source key to remove, as reported by get_cast."),
+      },
+      ["id", "source_key"],
+    ),
+    build: (a) => ({
+      method: "DELETE",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/source/${keyPath(reqStr(a, "source_key"))}`,
+    }),
+  },
+  {
+    name: "generate_cast_refs",
+    description:
+      "POST /api/cast/:id/generate-refs. THIS SPENDS (image inference). Ask the installed cast.image " +
+      "module to SYNTHESIZE a LoRA training reference set for this cast member from its portrait. " +
+      "Body: { config?, art_style?, source_keys?, choice? }. Returns 201 with a job summary carrying " +
+      "`job_id` and `phase`; the set cannot finish in one request, so POLL `poll_cast_refs` with that " +
+      "job_id until phase is 'done' or 'failed'. Set the portrait FIRST (set_cast_portrait): the " +
+      "portrait is the identity the set is generated from.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        config: { type: "object", description: "cast.image module config overrides." },
+        art_style: STR("Art-style lead, e.g. 'anime'; blank keeps the photographic templates."),
+        source_keys: ARR("R2 keys of source photos to condition on (see add_cast_source)."),
+        choice: STR("Which cast.image module to use, when several are installed."),
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/generate-refs`,
+      body: bodyWithout(a, "id"),
+    }),
+  },
+  {
+    name: "poll_cast_refs",
+    description:
+      "GET /api/cast/:id/refs-job/:jobId. Advance + poll a ref-generation job one tick. Returns " +
+      "{ job_id, cast_id, phase, module?, registered, images, error? }. Call repeatedly until phase " +
+      "is 'done' or 'failed'. `registered` is how many generated images are already on the member, " +
+      "so it moves while the job runs; `images` carries the keys, which `view_artifact` can show you.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        job_id: STR("The job_id returned by generate_cast_refs."),
+      },
+      ["id", "job_id"],
+    ),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/refs-job/${encodeURIComponent(reqStr(a, "job_id"))}`,
+    }),
+  },
+  {
+    name: "train_cast_lora",
+    description:
+      "POST /api/cast/:id/train-lora. THIS SPENDS GPU TIME (a training run, on the order of tens of " +
+      "minutes). Trains the character's identity LoRA from the member's reference set and banks the " +
+      "adapter back onto the member, so a character is trained ONCE and reused across every project. " +
+      "Body: { renderOverrides? }. Returns { ok, jobId, status, bundleKey, loraDestKey, cast }; then " +
+      "poll `cast_lora_status`. Add references first (add_cast_ref / generate_cast_refs) -- training " +
+      "an empty set is the expensive way to learn nothing.",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member public id."),
+        renderOverrides: { type: "object", description: "Optional training overrides bag." },
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/train-lora`,
+      body: bodyWithout(a, "id"),
+    }),
+  },
+  {
+    name: "cast_lora_status",
+    description:
+      "GET /api/cast/:id/lora-status. The cast member's LoRA training state: lora_status is one of " +
+      "'idle' | 'training' | 'ready' | 'failed', plus lora_job_id and lora_error. Poll this after " +
+      "train_cast_lora. Only a 'ready' member contributes a real identity LoRA to a render; binding " +
+      "an untrained one is how a film ships generic-looking characters.",
+    inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/lora-status`,
+    }),
   },
 
   // --- planning ---------------------------------------------------------------

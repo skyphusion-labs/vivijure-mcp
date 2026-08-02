@@ -18,7 +18,7 @@ what is written here. If a step does not work, see [Troubleshooting](#troublesho
 - [Check that it works](#check-that-it-works)
 - [Connect your agent](#connect-your-agent)
 - [How tool calls behave](#how-tool-calls-behave)
-- [Tool reference](#tool-reference) (all 19 tools, with arguments)
+- [Tool reference](#tool-reference) (every tool, with arguments)
 - [A render, end to end](#a-render-end-to-end)
 - [Security boundary](#security-boundary)
 - [Troubleshooting](#troubleshooting)
@@ -186,7 +186,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-Twenty-one tools in five groups. Arguments marked **(required)** must be present; everything else is
+**31** tools in **6** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -236,8 +236,66 @@ seed the render pipeline keys on) by copying an image that `chat` already produc
 - `id` (required): the cast member's public id.
 - `from_chat_artifact` (required): the `output_artifact.key` returned by a `chat` image call.
 
-The flow is always: `chat` with an image model, take `output_artifact.key` from its reply, pass it
-here. There is no direct upload path over MCP.
+**`from_chat_artifact` copies from ANY studio artifact key, not only a `chat` one** -- the name
+predates the other sources. A keyframe key, a generated ref, an uploaded image: all valid.
+
+> **The studio's sibling `{ key, mime }` form is narrower than CONTRACT.md 2.7 implies.** It requires
+> a key already staged under `cast/<internal id>/`, so a general staged key is refused there with
+> `400 key must be a safe staged path under this cast member`. These tools use `from_chat_artifact`,
+> which copies the object in and stages it correctly.
+
+**`delete_cast`** -- `DELETE /api/cast/:id`. Delete a member and reclaim its R2 artifacts. Irreversible.
+- `id` (required): the cast member's public id.
+
+**`clear_cast_portrait`** -- `DELETE /api/cast/:id/portrait`. Clear the portrait and delete the R2
+object (best-effort, so a missing object never blocks the clear).
+- `id` (required): the cast member's public id.
+
+**`add_cast_ref`** -- `POST /api/cast/:id/ref`. Add a **LoRA training reference** image, the set
+`train_cast_lora` learns the face from.
+- `id` (required): the cast member's public id.
+- `from_chat_artifact` (required): any existing studio artifact key.
+
+**`remove_cast_ref`** -- `DELETE /api/cast/:id/refs/<refKey>`. Remove one reference and its R2 object.
+- `id` (required): the cast member's public id.
+- `ref_key` (required): the full key as `get_cast` reports it.
+
+**`add_cast_source`** -- `POST /api/cast/:id/source`. Add a **source photo** (extra conditioning,
+distinct from the training set). Source keys are what `generate_cast_refs` takes as `source_keys`.
+- `id` (required), `from_chat_artifact` (required): as above.
+
+**`remove_cast_source`** -- `DELETE /api/cast/:id/source/<sourceKey>`.
+- `id` (required), `source_key` (required): the full key as `get_cast` reports it.
+
+> The keys above go in the **path**, not a body. They span slashes, and a `DELETE` from this MCP
+> never carries a body -- so the studio's alternative `{ key }`-in-body form is unreachable from
+> here. That is why these two path-shaped routes matter.
+
+**`generate_cast_refs`** -- `POST /api/cast/:id/generate-refs`. **Spends** (image inference). Asks the
+installed `cast.image` module to synthesize a training reference set from the member's portrait.
+- `id` (required): the cast member's public id.
+- `config`, `art_style`, `source_keys`, `choice`: optional.
+
+Returns `201` with a job summary. The set cannot finish in one request: poll `poll_cast_refs`. **Set
+the portrait first** -- it is the identity the set is generated from.
+
+**`poll_cast_refs`** -- `GET /api/cast/:id/refs-job/:jobId`. Advance and poll one tick.
+- `id` (required), `job_id` (required): from `generate_cast_refs`.
+
+Returns `{ job_id, cast_id, phase, module?, registered, images, error? }`. Poll until `phase` is
+`done` or `failed`. The keys in `images` can be looked at with `view_artifact`.
+
+**`train_cast_lora`** -- `POST /api/cast/:id/train-lora`. **Spends GPU time** (tens of minutes).
+Trains the character's identity LoRA and banks the adapter back onto the member, so a character is
+trained **once** and reused across every project.
+- `id` (required): the cast member's public id.
+- `renderOverrides`: optional training overrides.
+
+**`cast_lora_status`** -- `GET /api/cast/:id/lora-status`. Poll after training.
+- `id` (required): the cast member's public id.
+
+`lora_status` is `idle` | `training` | `ready` | `failed`. **Only a `ready` member contributes a real
+identity LoRA to a render**; binding an untrained one is how a film ships generic-looking characters.
 
 ### Planning (LLM calls; costs inference, not GPU render time)
 

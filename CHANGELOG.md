@@ -6,6 +6,25 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- Nothing yet.
+
+## v1.2.0 -- 2026-08-02
+
+MINOR, additive: **21 new tools** (21 -> 42), closing the cf#317 parity gap for everything that does
+not touch the render door. An agent can now create a project, save a storyboard, set a character up
+end to end, bring in its own image or audio bytes, organize the render library, and finish a
+completed film -- all things a human could already do in the panel and an agent could not.
+
+**Deliberately NOT in this release: render submit, poll and cancel.** vivijure-cf#334 found that the
+studio's render doors disagree about whether a film has sound, and curated tools built on either door
+would bless that divergence permanently. A test asserts no curated tool aims at a blocked render
+route; it is written to be deleted when that reconciliation lands.
+
+**One correction to the measurement this lane published.** The cf#317 enumeration reported "panel
+routes unreachable by any MCP means: 0". It was 3: the studio's upload routes read a RAW body and
+`studio_request` sends `application/json`, so route REACH was measured and body ENCODING never was.
+The error ran in the flattering direction, which is why nothing downstream would have surfaced it.
+
 - **feat(mcp): cast and identity, ten tools (cf#317).** Identity is step one of driving a film and an
   agent could only create, read and rename a cast member. It could not add or remove a training
   reference, add or remove a source photo, ask the studio to generate a reference set, train the

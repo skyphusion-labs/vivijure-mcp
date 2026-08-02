@@ -18,7 +18,7 @@ what is written here. If a step does not work, see [Troubleshooting](#troublesho
 - [Check that it works](#check-that-it-works)
 - [Connect your agent](#connect-your-agent)
 - [How tool calls behave](#how-tool-calls-behave)
-- [Tool reference](#tool-reference) (all 19 tools, with arguments)
+- [Tool reference](#tool-reference) (every tool, with arguments)
 - [A render, end to end](#a-render-end-to-end)
 - [Security boundary](#security-boundary)
 - [Troubleshooting](#troubleshooting)
@@ -186,7 +186,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-Twenty-one tools in five groups. Arguments marked **(required)** must be present; everything else is
+**30** tools in **8** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -217,7 +217,11 @@ storyboard.
 
 **`list_renders`** -- `GET /api/storyboard/renders`. The render library (history rows).
 - `project_id`: filter to one project's renders.
-- `limit`: max rows (default 100).
+- `limit`: max rows (default 50).
+
+**`render_tags`** -- `GET /api/storyboard/renders/tags`. No arguments. Every tag already in use
+across the library. Read this before setting tags with `update_render`, so an agent reuses the
+vocabulary a human established instead of starting a parallel one.
 
 ### Cast
 
@@ -238,6 +242,70 @@ seed the render pipeline keys on) by copying an image that `chat` already produc
 
 The flow is always: `chat` with an image model, take `output_artifact.key` from its reply, pass it
 here. There is no direct upload path over MCP.
+
+### Projects and the render library (write)
+
+**`create_project`** -- `POST /api/storyboard/projects`. Create a project.
+- `name` (required): the project's display name.
+- `prefs`: optional per-project preferences object.
+
+Returns `201 { project }`. Its `id` is the public id every other project tool takes.
+
+**`save_storyboard`** -- `POST /api/storyboard/projects/:id/storyboard`. Persist a storyboard as the
+project's **last saved storyboard**, which is what `get_project` returns.
+- `id` (required): the project's public id.
+- `storyboard` (required): the storyboard object.
+
+The storyboard is stored opaquely; it is validated at `preflight` / render time, not here.
+
+**`update_project`** -- `PATCH /api/storyboard/projects/:id`. Update project metadata.
+- `id` (required): the project's public id.
+- `name`, `prefs`, `storyboard`: send only what you are changing.
+
+> **The studio applies EITHER `storyboard` OR `name`/`prefs`, never both in one call.** If
+> `storyboard` is present the other two are ignored, silently. Send them as two calls, or use
+> `save_storyboard`, which only ever does the one thing.
+
+**`delete_project`** -- `DELETE /api/storyboard/projects/:id`. Irreversible. `200 { ok, deleted }`.
+- `id` (required): the project's public id.
+
+**`update_render`** -- `PATCH /api/storyboard/renders/:id`. Organize a library row.
+- `id` (required): the render row's public id (from `list_renders`).
+- `label`, `lockedShots`, `folderPath`, `tags`: only the fields you send are applied.
+
+Unlike most studio replies this one is the `RenderRow` **itself**, not wrapped in a resource key.
+
+**`delete_render`** -- `DELETE /api/storyboard/renders/:id`. Irreversible. `200 { ok: true }`.
+- `id` (required): the render row's public id.
+
+### Finishing a completed render
+
+Two synchronous routes that operate on a render that is already `COMPLETED`. They do not start a job
+and there is nothing to poll.
+
+**`add_render_audio`** -- `POST /api/storyboard/renders/:id/add-audio`. Mux a staged bed onto a
+finished render, entirely off the GPU.
+- `id` (required): the render row's public id.
+- `audioKey` (required): a staged audio key.
+
+`200 { ok: true, output_key }`, or `422` with the reason if the mux fails.
+
+**`add_render_narration`** -- `POST /api/storyboard/renders/:id/add-narration`. **Spends** (TTS
+inference, not GPU render time). Generates a narration track from text, then muxes it.
+- `id` (required): the render row's public id.
+- `text` (required): the narration script.
+- `module`, `config`: optional specific narration module and its config.
+
+The studio generates AND muxes inside the one request, so this call can take tens of seconds.
+`200 { ok: true, output_key, module, label }`, `422` on failure, or `504` if generation does not
+finish inside the studio's bounded wait -- **a `504` here means try again, not that the render is
+broken.**
+
+> **The other finishing routes have no curated tool on purpose.** `finalize`, `animate-cloud`,
+> `animate-hybrid`, `regen-shot`, `scatter` and `render-from-keyframes` each START a new render job,
+> and the only route that polls one is `GET /api/storyboard/render/:jobId`. That poll is part of the
+> render-door reconciliation in vivijure-cf#334, so a curated submit tool would ship half a
+> capability and freeze a door that is being changed. Use `studio_request` for them meanwhile.
 
 ### Planning (LLM calls; costs inference, not GPU render time)
 

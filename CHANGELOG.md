@@ -6,7 +6,23 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
-- Nothing yet.
+- **feat(mcp): project and render-library WRITE, plus the two door-independent finishing routes
+  (cf#317).** An agent could list and read projects and renders and could not create, save, organize
+  or delete one. Nine tools: `create_project`, `save_storyboard`, `update_project`, `delete_project`,
+  `render_tags`, `update_render`, `delete_render`, `add_render_audio`, `add_render_narration`.
+  - **`save_storyboard` closes a promise the read side was already making.** `get_project`'s own
+    description says it returns the project "incl. its last saved storyboard" while nothing in the
+    catalog could save one, so an agent could plan and refine a storyboard and never persist it.
+  - **`update_project` documents the studio's either/or.** If `storyboard` is present the route
+    ignores `name` and `prefs` in the same call, silently. An agent that does not know that loses the
+    rename and gets a `200`, so the trap is stated in the tool description where the agent reads it.
+  - **The render-door line is asserted, not remembered.** A test scans every curated tool's emitted
+    path and fails if one aims at a render submit / poll / cancel route (cf#334). It is expected to be
+    deleted when that reconciliation lands; until then it is what stops the divergence being blessed
+    by 29 new tools.
+- **fix(mcp): `list_renders` published the wrong default.** Both its description and its schema said
+  "default 100"; the studio's `DEFAULT_RENDERS_LIMIT` is **50** and `CONTRACT.md` 2.25 says 50. An
+  agent sizing a page from the tool description was reasoning about a number the studio does not use.
 
 ## v1.1.0 -- 2026-08-02
 

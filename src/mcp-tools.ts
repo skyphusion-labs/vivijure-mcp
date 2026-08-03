@@ -773,24 +773,33 @@ export const TOOLS: McpTool[] = [
     description:
       "POST /api/render/film. START A FILM RENDER (this SPENDS: GPU / cloud i2v). Body: { bundle_key " +
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
-      "motion_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
-      "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras? }. " +
+      "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
+      "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
+      "qualityTier? }. " +
       "Each *_config is { [moduleName]: config }, feeding one hook stage: finish_config -> the per-shot " +
       "finish chain, speech_config -> the speech (dialogue-audio) chain, film_finish_config -> the " +
       "film.finish chain on the assembled film (this is where SUBTITLE mode burn/sidecar/both and the " +
       "film-titles knobs live; putting subtitle config in finish_config silently no-ops to burn), " +
       "master_config -> the master (audio bed) chain. Returns { film_id, phase }. Then POLL poll_film until phase is " +
-      "done/failed. Set motion_backend explicitly (a name from studio_modules hooks['motion.backend']); " +
-      "an omitted backend can pick a non-operational door. VOICES: pass cast_loras so dialogue speaks " +
-      "with each cast member's voice; explicit dialogue_lines win over bundle-derived ones, and a " +
-      "line's own voice_id wins over the cast voice. Without cast_loras or voice_id, dialogue falls " +
-      "to the studio default voice.",
+      "done/failed. Set motion_backend and keyframe_backend explicitly (names from studio_modules " +
+      "hooks['motion.backend'] / hooks['keyframe']); an omitted backend can pick a non-operational " +
+      "door (#380). qualityTier (draft/standard/final, also in studio_modules render.quality_tiers) " +
+      "labels the render-history row with what was requested; omitted, the row records \"final\" " +
+      "regardless of what actually ran (#382) -- it does not change what renders. VOICES: pass " +
+      "cast_loras so dialogue speaks with each cast member's voice; explicit dialogue_lines win over " +
+      "bundle-derived ones, and a line's own voice_id wins over the cast voice. Without cast_loras or " +
+      "voice_id, dialogue falls to the studio default voice.",
     inputSchema: OBJ(
       {
         bundle_key: STR("The bundleKey from bundle_storyboard."),
         scenes: ARR("[{ shot_id, prompt, seconds }] -- non-empty."),
         project: STR("Project namespace (derived from bundle_key if omitted)."),
         motion_backend: STR("A motion.backend module name (from studio_modules)."),
+        keyframe_backend: STR(
+          "A keyframe module name (from studio_modules hooks['keyframe']). Omitted, selection " +
+          "falls to the first serving module for that hook, which can be a non-operational door " +
+          "(#380).",
+        ),
         keyframe_config: { type: "object", description: "Keyframe module config (e.g. { quality_tier })." },
         motion_config: { type: "object", description: "Motion module config." },
         finish_config: { type: "object", description: "{ [moduleName]: config } for the per-shot finish chain." },
@@ -811,6 +820,12 @@ export const TOOLS: McpTool[] = [
             "list_cast). Drives the keyframe LoRAs AND each speaking slot's voice; without it, " +
             "dialogue voices fall to the default.",
         },
+        qualityTier: STR(
+          "draft | standard | final (also listed in studio_modules render.quality_tiers). Labels " +
+          "the render-history row with the tier requested; omitted, the row records \"final\" " +
+          "regardless of what actually ran (#382). Does not change the actual render tier, which " +
+          "is driven by keyframe_config / motion_config.",
+        ),
       },
       ["bundle_key", "scenes"],
     ),

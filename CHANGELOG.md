@@ -6,7 +6,7 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
-- Nothing yet.
+- **fix(mcp): expose `keyframe_backend` + `qualityTier` on `submit_film` (vivijure-cf#380, vivijure-cf#382, mcp#26).** Both route params existed on `POST /api/render/film` with no schema entry, so an omitted value resolved to a confident-looking wrong default instead of erroring: `keyframe_backend` fell through to `serving[0]` (the local-gpu door, live projection order), and `qualityTier` recorded `"final"` on every MCP-submitted film regardless of what ran. Mirrors `motion_backend`'s existing style; the studio-side `?? "final"` default is unchanged (out of scope, see cf#382).
 
 ## v1.2.0 -- 2026-08-02
 

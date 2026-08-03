@@ -193,6 +193,78 @@ describe("vivijure MCP tool dispatch", () => {
     expect("master_config" in sent).toBe(false);
   });
 
+  it("submit_film exposes keyframe_backend + qualityTier in its inputSchema (mcp#26, #380/#382)", async () => {
+    // Discoverability check: bodyWithout() forwards any key present in the call args regardless of
+    // the schema, so the actual gap #380/#382 found was that an agent has no documented way to know
+    // these fields exist. tools/list is the agent-facing map; assert the map carries them.
+    const res = await worker.fetch(
+      mcpRequest({ jsonrpc: "2.0", id: 30, method: "tools/list" }, AUTH),
+      ENV,
+    );
+    const body = (await res.json()) as {
+      result: { tools: { name: string; inputSchema: { properties: Record<string, unknown> } }[] };
+    };
+    const tool = body.result.tools.find((t) => t.name === "submit_film");
+    expect(tool, "submit_film missing from tools/list").toBeDefined();
+    expect(Object.keys(tool!.inputSchema.properties)).toContain("keyframe_backend");
+    expect(Object.keys(tool!.inputSchema.properties)).toContain("qualityTier");
+  });
+
+  it("submit_film forwards keyframe_backend + qualityTier to the studio body (mcp#26, #380/#382)", async () => {
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 31,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+              motion_backend: "own-gpu",
+              keyframe_backend: "cloud-keyframe",
+              qualityTier: "draft",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean } };
+    expect(body.result.isError).toBe(false);
+    const sent = JSON.parse(calls[0].init.body as string);
+    expect(sent.keyframe_backend).toBe("cloud-keyframe");
+    expect(sent.qualityTier).toBe("draft");
+  });
+
+  it("submit_film omits keyframe_backend + qualityTier when not passed (not sent as null)", async () => {
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 32,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean } };
+    expect(body.result.isError).toBe(false);
+    const sent = JSON.parse(calls[0].init.body as string);
+    expect("keyframe_backend" in sent).toBe(false);
+    expect("qualityTier" in sent).toBe(false);
+  });
+
   it("bad arguments return an isError result and never call the studio", async () => {
     const res = await worker.fetch(
       mcpRequest(

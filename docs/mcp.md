@@ -422,6 +422,10 @@ There is no undo; treat every call like clicking a "charge my account" button.
   A film is a full render, and a full render REQUIRES an explicit backend: an omitted or
   non-serving value is rejected at submit with a `400` listing the installed backend names
   (#500/#504) -- the studio never silently picks one for you.
+- `keyframe_backend`: a keyframe module name from `studio_modules` `hooks['keyframe']`. Unlike
+  `motion_backend`, the studio does NOT reject an omitted value at submit (#380) -- selection
+  falls through to the first serving keyframe module, which can be a non-operational door (e.g.
+  an unseeded local-GPU door). Pass it explicitly.
 - `keyframe_config`: keyframe module config, e.g. `{ "quality_tier": "..." }` (tiers come from
   `studio_modules`).
 - `motion_config`: motion module config (knobs per that module's `config_schema`).
@@ -447,6 +451,11 @@ There is no undo; treat every call like clicking a "charge my account" button.
 - `cast_loras`: `{ [slot]: castId }` -- bind storyboard character slots (`A`, `B`, ...) to cast ids
   from `list_cast`. This drives BOTH the keyframe LoRAs (the character's face) and each speaking
   slot's voice.
+- `qualityTier`: `draft` | `standard` | `final` (also listed in `studio_modules`
+  `render.quality_tiers`). Labels the render-history row with the tier you requested; if omitted,
+  the row records `"final"` regardless of what actually ran (#382). Does not change the actual
+  render, which is still driven by `keyframe_config` / `motion_config` -- this only makes the
+  history label honest.
 
 **Voices, in one rule:** explicit `dialogue_lines` win over bundle-derived dialogue; a line's own
 `voice_id` wins over the cast voice; a voiceless line uses the cast voice of its shot's speaking

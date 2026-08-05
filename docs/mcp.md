@@ -446,21 +446,26 @@ There is no undo; treat every call like clicking a "charge my account" button.
 - `audio_key`: a staged audio bed to mux in after assemble.
 - `film_titles`: `{ title?: { text, subtitle? }, credits?: { lines } }` title cards.
 - `dialogue_lines`: `[{ shot_id, text, voice_id? }]` spoken lines for TTS + captions. A line's
-  `voice_id` (a name from the `voices` tool) always wins; omit it and pass `cast_loras` to speak
-  with the cast member's own voice.
+  `voice_id` (a name from the `voices` tool) is the **voice-only** path: no trained LoRA required
+  (mcp#29). It always wins over any cast voice. Use this when a cast member should speak but has
+  no identity adapter yet.
 - `cast_loras`: `{ [slot]: castId }` -- bind storyboard character slots (`A`, `B`, ...) to cast ids
-  from `list_cast`. This drives BOTH the keyframe LoRAs (the character's face) and each speaking
-  slot's voice.
+  from `list_cast`. **Requires a trained identity LoRA** on each bound member (the studio hard-400s
+  otherwise). Drives keyframe identity AND, for voiceless dialogue lines, that member's voice.
+  Not a voice-only path -- for voice without LoRA, use `dialogue_lines[].voice_id` (mcp#29).
 - `qualityTier`: `draft` | `standard` | `final` (also listed in `studio_modules`
   `render.quality_tiers`). Labels the render-history row with the tier you requested; if omitted,
   the row records `"final"` regardless of what actually ran (#382). Does not change the actual
   render, which is still driven by `keyframe_config` / `motion_config` -- this only makes the
   history label honest.
 
-**Voices, in one rule:** explicit `dialogue_lines` win over bundle-derived dialogue; a line's own
-`voice_id` wins over the cast voice; a voiceless line uses the cast voice of its shot's speaking
-slot (via `cast_loras`); only when nothing maps does it fall to the studio default voice. If your
-cast member "has a voice in the UI" but the film speaks with the default, you forgot `cast_loras`.
+**Voices, two paths (mcp#29):** (1) `cast_loras` for identity LoRA **and** voice together -- only
+works when the cast member is trained; an untrained member 400s. (2) `dialogue_lines[].voice_id`
+for voice alone -- works with no LoRA. Priority: explicit `dialogue_lines` win over bundle-derived
+dialogue; a line's own `voice_id` wins over the cast voice; a voiceless line uses the cast voice of
+its shot's speaking slot (via `cast_loras`); only when nothing maps does it fall to the studio
+default voice. If a cast member "has a voice in the UI" but was never trained, do **not** pass
+them in `cast_loras` -- set `voice_id` on the line instead.
 
 Returns `{ film_id, phase }`. Nothing renders any further unless you poll.
 

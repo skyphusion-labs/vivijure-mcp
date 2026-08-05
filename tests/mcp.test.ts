@@ -193,6 +193,26 @@ describe("vivijure MCP tool dispatch", () => {
     expect("master_config" in sent).toBe(false);
   });
 
+  it("submit_film description names voice_id as the path for untrained cast (mcp#29)", async () => {
+    // Phase-1 agents followed "pass cast_loras for voice" and hit a hard 400 when the member had a
+    // voice but no trained LoRA. The description must state both paths so that trap is not re-taught.
+    const res = await worker.fetch(
+      mcpRequest({ jsonrpc: "2.0", id: 29, method: "tools/list" }, AUTH),
+      ENV,
+    );
+    const body = (await res.json()) as {
+      result: { tools: { name: string; description: string; inputSchema: { properties: Record<string, { description?: string }> } }[] };
+    };
+    const tool = body.result.tools.find((t) => t.name === "submit_film");
+    expect(tool, "submit_film missing from tools/list").toBeDefined();
+    const desc = tool!.description;
+    expect(desc).toMatch(/voice_id/);
+    expect(desc).toMatch(/no trained LoRA|no LoRA required|NOT a voice-only path/i);
+    expect(desc).toMatch(/cast_loras/);
+    const castDesc = tool!.inputSchema.properties.cast_loras?.description ?? "";
+    expect(castDesc).toMatch(/voice_id|trained/i);
+  });
+
   it("submit_film exposes keyframe_backend + qualityTier in its inputSchema (mcp#26, #380/#382)", async () => {
     // Discoverability check: bodyWithout() forwards any key present in the call args regardless of
     // the schema, so the actual gap #380/#382 found was that an agent has no documented way to know

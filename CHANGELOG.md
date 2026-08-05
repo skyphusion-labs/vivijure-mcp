@@ -6,7 +6,10 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
-- Nothing yet.
+- **docs(mcp): honest `submit_film` voice paths (mcp#29).** The tool description and `docs/mcp.md`
+  told agents to pass `cast_loras` for voice, but the studio hard-400s that parameter when the cast
+  member has no trained identity LoRA. Document both paths: `cast_loras` for identity+voice (trained
+  only); `dialogue_lines[].voice_id` for voice alone (no LoRA required).
 
 ## v1.2.1 -- 2026-08-03
 

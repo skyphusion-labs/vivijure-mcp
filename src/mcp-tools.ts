@@ -785,10 +785,13 @@ export const TOOLS: McpTool[] = [
       "hooks['motion.backend'] / hooks['keyframe']); an omitted backend can pick a non-operational " +
       "door (#380). qualityTier (draft/standard/final, also in studio_modules render.quality_tiers) " +
       "labels the render-history row with what was requested; omitted, the row records \"final\" " +
-      "regardless of what actually ran (#382) -- it does not change what renders. VOICES: pass " +
-      "cast_loras so dialogue speaks with each cast member's voice; explicit dialogue_lines win over " +
-      "bundle-derived ones, and a line's own voice_id wins over the cast voice. Without cast_loras or " +
-      "voice_id, dialogue falls to the studio default voice.",
+      "regardless of what actually ran (#382) -- it does not change what renders. VOICES (two paths): " +
+      "(1) cast_loras binds identity LoRA AND that cast member's voice, and the studio hard-400s if " +
+      "the member has no trained LoRA -- so cast_loras is NOT a voice-only path (mcp#29). " +
+      "(2) dialogue_lines[].voice_id (a name from the voices tool) selects a speaker voice with NO " +
+      "LoRA required; that is the path for an untrained cast member who only needs to speak. " +
+      "explicit dialogue_lines win over bundle-derived ones; a line's own voice_id wins over any " +
+      "cast voice. Without cast_loras or voice_id, dialogue falls to the studio default voice.",
     inputSchema: OBJ(
       {
         bundle_key: STR("The bundleKey from bundle_storyboard."),
@@ -810,15 +813,18 @@ export const TOOLS: McpTool[] = [
         film_titles: { type: "object", description: "{ title?: { text, subtitle? }, credits?: { lines } }." },
         dialogue_lines: ARR(
           "[{ shot_id, text, voice_id? }] spoken lines for TTS + captions. voice_id (a name from the " +
-          "voices tool) overrides the speaker's cast voice; omit it and pass cast_loras to use the " +
-          "cast member's own voice.",
+          "voices tool) is the voice-only path: no trained LoRA required (mcp#29). It wins over any " +
+          "cast voice from cast_loras. Use this when a cast member should speak but has no identity " +
+          "adapter yet.",
         ),
         cast_loras: {
           type: "object",
           description:
             "{ [slot]: castId } -- bind storyboard character slots (A, B, ...) to cast ids (from " +
-            "list_cast). Drives the keyframe LoRAs AND each speaking slot's voice; without it, " +
-            "dialogue voices fall to the default.",
+            "list_cast). Requires a trained identity LoRA on each bound member (studio 400s " +
+            "otherwise). Drives keyframe identity AND, for voiceless dialogue lines, that member's " +
+            "voice. Not a voice-only path -- for voice without LoRA, use dialogue_lines[].voice_id " +
+            "(mcp#29).",
         },
         qualityTier: STR(
           "draft | standard | final (also listed in studio_modules render.quality_tiers). Labels " +

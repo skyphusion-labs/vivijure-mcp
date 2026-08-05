@@ -6,7 +6,10 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
-- Nothing yet.
+- **docs(mcp): honest `poll_cast_refs` + `submit_film` tool text (vivijure-cf#386).** (1) `registered`
+  is the count already on the member and moves while the job runs under progressive registration;
+  watch `phase` for terminal state. (2) Omitting a `*_config` does NOT skip that chain -- modules
+  still run at schema defaults and still bill; no-op via each module's own disable knob.
 
 ## v1.2.1 -- 2026-08-03
 

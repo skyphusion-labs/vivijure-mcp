@@ -602,8 +602,9 @@ export const TOOLS: McpTool[] = [
     description:
       "GET /api/cast/:id/refs-job/:jobId. Advance + poll a ref-generation job one tick. Returns " +
       "{ job_id, cast_id, phase, module?, registered, images, error? }. Call repeatedly until phase " +
-      "is 'done' or 'failed'. `registered` is how many generated images are already on the member, " +
-      "so it moves while the job runs; `images` carries the keys, which `view_artifact` can show you.",
+      "is 'done' or 'failed'. Watch `phase` for terminal state. `registered` is how many generated " +
+      "images are already on the member and moves while the job runs (each progressive tick folds " +
+      "new refs onto the member; cf#386); `images` carries those keys, which `view_artifact` can show you.",
     inputSchema: OBJ(
       {
         id: STR("Cast member public id."),
@@ -780,15 +781,18 @@ export const TOOLS: McpTool[] = [
       "finish chain, speech_config -> the speech (dialogue-audio) chain, film_finish_config -> the " +
       "film.finish chain on the assembled film (this is where SUBTITLE mode burn/sidecar/both and the " +
       "film-titles knobs live; putting subtitle config in finish_config silently no-ops to burn), " +
-      "master_config -> the master (audio bed) chain. Returns { film_id, phase }. Then POLL poll_film until phase is " +
-      "done/failed. Set motion_backend and keyframe_backend explicitly (names from studio_modules " +
-      "hooks['motion.backend'] / hooks['keyframe']); an omitted backend can pick a non-operational " +
-      "door (#380). qualityTier (draft/standard/final, also in studio_modules render.quality_tiers) " +
-      "labels the render-history row with what was requested; omitted, the row records \"final\" " +
-      "regardless of what actually ran (#382) -- it does not change what renders. VOICES: pass " +
-      "cast_loras so dialogue speaks with each cast member's voice; explicit dialogue_lines win over " +
-      "bundle-derived ones, and a line's own voice_id wins over the cast voice. Without cast_loras or " +
-      "voice_id, dialogue falls to the studio default voice.",
+      "master_config -> the master (audio bed) chain. OMITTING a *_config does NOT skip that chain " +
+      "(#386): every serving module still runs at its config_schema defaults (and still bills). To " +
+      "no-op a step, set that module's own disable knob (e.g. finish-rife interpolate:false -> " +
+      "noop:interpolate-off), not by leaving the map out. Returns { film_id, phase }. Then POLL " +
+      "poll_film until phase is done/failed. Set motion_backend and keyframe_backend explicitly " +
+      "(names from studio_modules hooks['motion.backend'] / hooks['keyframe']); an omitted backend " +
+      "can pick a non-operational door (#380). qualityTier (draft/standard/final, also in " +
+      "studio_modules render.quality_tiers) labels the render-history row with what was requested; " +
+      "omitted, the row records \"final\" regardless of what actually ran (#382) -- it does not " +
+      "change what renders. VOICES: pass cast_loras so dialogue speaks with each cast member's " +
+      "voice; explicit dialogue_lines win over bundle-derived ones, and a line's own voice_id wins " +
+      "over the cast voice. Without cast_loras or voice_id, dialogue falls to the studio default voice.",
     inputSchema: OBJ(
       {
         bundle_key: STR("The bundleKey from bundle_storyboard."),
@@ -802,10 +806,32 @@ export const TOOLS: McpTool[] = [
         ),
         keyframe_config: { type: "object", description: "Keyframe module config (e.g. { quality_tier })." },
         motion_config: { type: "object", description: "Motion module config." },
-        finish_config: { type: "object", description: "{ [moduleName]: config } for the per-shot finish chain." },
-        speech_config: { type: "object", description: "{ [moduleName]: config } for the speech (dialogue-audio) chain." },
-        film_finish_config: { type: "object", description: "{ [moduleName]: config } for the film.finish chain on the assembled film; where subtitle mode (burn/sidecar/both) and the film-titles knobs live." },
-        master_config: { type: "object", description: "{ [moduleName]: config } for the master (audio bed) chain." },
+        finish_config: {
+          type: "object",
+          description:
+            "{ [moduleName]: config } for the per-shot finish chain. Omitting this map does NOT skip " +
+            "the chain -- modules still run at schema defaults (#386). Use each module's own no-op " +
+            "knob to skip a step.",
+        },
+        speech_config: {
+          type: "object",
+          description:
+            "{ [moduleName]: config } for the speech (dialogue-audio) chain. Omitting does not skip; " +
+            "defaults still run (#386).",
+        },
+        film_finish_config: {
+          type: "object",
+          description:
+            "{ [moduleName]: config } for the film.finish chain on the assembled film; where subtitle " +
+            "mode (burn/sidecar/both) and the film-titles knobs live. Omitting does not skip the chain " +
+            "(#386) -- defaults still run and bill.",
+        },
+        master_config: {
+          type: "object",
+          description:
+            "{ [moduleName]: config } for the master (audio bed) chain. Omitting does not skip; " +
+            "defaults still run (#386).",
+        },
         audio_key: STR("Staged audio bed to mux after assemble."),
         film_titles: { type: "object", description: "{ title?: { text, subtitle? }, credits?: { lines } }." },
         dialogue_lines: ARR(

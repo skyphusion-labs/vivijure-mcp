@@ -290,7 +290,9 @@ the portrait first** -- it is the identity the set is generated from.
 - `id` (required), `job_id` (required): from `generate_cast_refs`.
 
 Returns `{ job_id, cast_id, phase, module?, registered, images, error? }`. Poll until `phase` is
-`done` or `failed`. The keys in `images` can be looked at with `view_artifact`.
+`done` or `failed`. Watch `phase` for terminal state. `registered` is the count of generated images
+already written onto the member and moves while the job runs (each progressive tick folds new refs;
+cf#386). The keys in `images` can be looked at with `view_artifact`.
 
 **`train_cast_lora`** -- `POST /api/cast/:id/train-lora`. **Spends GPU time** (tens of minutes).
 Trains the character's identity LoRA and banks the adapter back onto the member, so a character is
@@ -434,15 +436,20 @@ There is no undo; treat every call like clicking a "charge my account" button.
   gives a truer photoreal texture but is currently an explicit opt-in that CUDA-OOMs on
   long/high-fps clips until the upscale handler gains tiled inference; leave the default unless
   you know your clips are short.
+  **Omitting a `*_config` does NOT skip that chain (cf#386):** every serving module still runs at
+  its `config_schema` defaults (and still bills). To no-op a step, set that module's own disable
+  knob (e.g. `finish-rife` with `interpolate: false` yields `noop:interpolate-off`), not by leaving
+  the map out.
 - `speech_config`: `{ [moduleName]: config }` for the `speech` chain (per-shot dialogue-audio
-  cleanup / enhancement, post-dialogue and pre-finish).
+  cleanup / enhancement, post-dialogue and pre-finish). Same omit rule as `finish_config`.
 - `film_finish_config`: `{ [moduleName]: config }` for the `film.finish` chain on the assembled,
   muxed film. **This is where subtitle mode lives** (`burn` / `sidecar` / `both`) and the
   film-titles knobs. Putting subtitle config under `finish_config` instead validates against the
   per-shot finish chain, silently no-ops, and the subtitle module falls back to `burn` (no
-  sidecar, no error) -- so subtitle mode is reachable ONLY through `film_finish_config`.
+  sidecar, no error) -- so subtitle mode is reachable ONLY through `film_finish_config`. Same omit
+  rule as `finish_config` -- an absent map still runs subtitle / film-titles at defaults.
 - `master_config`: `{ [moduleName]: config }` for the `master` chain (assembled film's audio bed
-  -> mastered audio: music upscale + loudness, pre-mux).
+  -> mastered audio: music upscale + loudness, pre-mux). Same omit rule as `finish_config`.
 - `audio_key`: a staged audio bed to mux in after assemble.
 - `film_titles`: `{ title?: { text, subtitle? }, credits?: { lines } }` title cards.
 - `dialogue_lines`: `[{ shot_id, text, voice_id? }]` spoken lines for TTS + captions. A line's

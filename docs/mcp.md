@@ -1,5 +1,10 @@
 # Vivijure Studio MCP
 
+> **Package vs host:** this npm package is the MCP Worker source. Deploy scripts, wrangler templates,
+> and studio runbooks (`deploy:mcp`, `DEPLOYMENT.md`, `quickstart.md`) live in the **studio host**
+> (`vivijure-cf` or `vivijure-local`), not in this repo.
+
+
 Drive your Vivijure studio from an AI agent (Claude Code, Cursor, or any Model Context Protocol
 client) instead of raw `curl` or the browser. Implementation lives in **`@skyphusion-labs/vivijure-mcp`**
 (`src/mcp.ts`). Host repos (`vivijure-cf`, `vivijure-local`) supply only wrangler/deploy config.

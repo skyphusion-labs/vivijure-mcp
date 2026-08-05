@@ -6,6 +6,9 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **Docs audit 2026-08-05:** host-vs-package deploy pointer; poll TTL aligned at 6h.
+
+
 - Nothing yet.
 
 ## v1.2.1 -- 2026-08-03

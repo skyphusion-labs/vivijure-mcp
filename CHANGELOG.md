@@ -6,7 +6,9 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
-- Nothing yet.
+- **docs(mcp): honest `preflight` schema (mcp#26).** Dropped `bundleKey` / `audioKey` (route never
+  reads them; advertising them was false confidence). Added `motionBackend` + `quality` so the
+  duration-grid clamp (#707/#751) is drivable from MCP.
 
 ## v1.2.1 -- 2026-08-03
 

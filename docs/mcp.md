@@ -393,8 +393,14 @@ with `{ ok, counts, issues }`: **problems are data, not an HTTP error.** Run thi
 is acceptable).
 - `storyboard` (required): the storyboard to validate.
 - `castBindings`: `{ [slot]: cast_id }` bindings, if the storyboard uses cast slots.
-- `bundleKey`: an already-assembled bundle key, if validating one.
-- `audioKey`: a staged audio bed key, if any.
+- `motionBackend`: a `motion.backend` module name. When that module declares a `duration_grid`,
+  preflight warns/errors on shots that exceed it (#707/#751). Pass this so the grid clamp is not
+  skipped from MCP (mcp#26).
+- `quality`: `draft` | `standard` | `final` for the duration-grid clamp when `motionBackend` is set.
+
+**Not validated here (mcp#26):** `bundleKey` and `audioKey` are **not** read by the studio route.
+They were previously advertised on this tool and manufactured false confidence; they are removed
+from the schema. Validate a bed via the render path, not preflight.
 
 **`chat`** -- `POST /api/chat`. The planner assistant and image generator, one tool.
 - `model` (required): a model id (text or image; see `storyboard_models` and the module registry).
@@ -555,7 +561,8 @@ The full happy path, with the arguments that matter. Steps 1 through 4 are free;
    `render.quality_tiers`.
 2. **`plan_storyboard`** with `{ brief, model }` (model from `storyboard_models`); optionally
    iterate with **`refine_storyboard`** until the storyboard reads right.
-3. **`preflight`** with `{ storyboard }` (plus `castBindings` if you cast it) -- keep fixing and
+3. **`preflight`** with `{ storyboard }` (plus `castBindings` if you cast it, and `motionBackend` /
+   `quality` when you know the door so the duration-grid clamp can fire) -- keep fixing and
    re-running until `ok: true`.
 4. **`bundle_storyboard`** with `{ storyboard, characterRefs }` -- keep the returned `bundleKey`.
 5. **`submit_film`** with `{ bundle_key, scenes, motion_backend, keyframe_config: { quality_tier } }`

@@ -122,7 +122,7 @@ curl -s https://studio-mcp.example.com/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-You should get a JSON-RPC result listing all 19 tools. The same request **without** the header must
+You should get a JSON-RPC result listing all 42 tools. The same request **without** the header must
 return `401` -- if it does not, stop and check your `MCP_TOKEN` seeding before wiring any client.
 
 Note the split: a missing or wrong `MCP_TOKEN` fails at the door (`401`), but a missing or wrong

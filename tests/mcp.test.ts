@@ -90,6 +90,57 @@ describe("vivijure MCP transport", () => {
 describe("vivijure MCP tool dispatch", () => {
   beforeEach(() => stubFetch({ film_id: "film-abc", phase: "keyframe" }, 201));
 
+  it("preflight schema drops ignored keys and exposes motionBackend (mcp#26)", async () => {
+    const list = await worker.fetch(
+      mcpRequest({ jsonrpc: "2.0", id: 40, method: "tools/list" }, AUTH),
+      ENV,
+    );
+    const listBody = (await list.json()) as {
+      result: { tools: { name: string; description: string; inputSchema: { properties: Record<string, unknown> } }[] };
+    };
+    const tool = listBody.result.tools.find((t) => t.name === "preflight");
+    expect(tool, "preflight missing").toBeDefined();
+    const props = Object.keys(tool!.inputSchema.properties);
+    expect(props).toContain("motionBackend");
+    expect(props).toContain("quality");
+    expect(props).not.toContain("bundleKey");
+    expect(props).not.toContain("audioKey");
+    expect(tool!.description).toMatch(/duration-grid|motionBackend/i);
+
+    stubFetch({ ok: true, counts: { error: 0 }, issues: [] }, 200);
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 41,
+          method: "tools/call",
+          params: {
+            name: "preflight",
+            arguments: {
+              storyboard: { title: "t", scenes: [] },
+              motionBackend: "local-gpu",
+              quality: "draft",
+              // Undeclared keys must not be forwarded (false confidence was mcp#26 B).
+              bundleKey: "bundles/should-not-go",
+              audioKey: "audio/should-not-go",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/api/storyboard/preflight");
+    const sent = JSON.parse(String(calls[0].init.body));
+    expect(sent.storyboard).toEqual({ title: "t", scenes: [] });
+    expect(sent.motionBackend).toBe("local-gpu");
+    expect(sent.quality).toBe("draft");
+    expect(sent).not.toHaveProperty("bundleKey");
+    expect(sent).not.toHaveProperty("audioKey");
+  });
+
   it("submit_film hits /api/render/film with the studio bearer + JSON body", async () => {
     const res = await worker.fetch(
       mcpRequest(

@@ -702,7 +702,10 @@ export const TOOLS: McpTool[] = [
     description:
       "POST /api/storyboard/preflight. Pre-render validation. Returns 200 with { ok, counts, issues }: " +
       "problems are DATA, not an HTTP error. Run before submit_film to catch blockers. Body: " +
-      "{ storyboard (req), castBindings?, bundleKey?, audioKey? }.",
+      "{ storyboard (req), castBindings?, motionBackend?, quality? }. " +
+      "Pass motionBackend (+ optional quality) so duration-grid clamp warnings/errors fire (#707/#751). " +
+      "Does NOT validate bundleKey or audioKey -- those fields are not read by the route (mcp#26); " +
+      "do not pass them expecting a check.",
     inputSchema: OBJ(
       {
         storyboard: { type: "object", description: "The storyboard to validate." },
@@ -712,8 +715,14 @@ export const TOOLS: McpTool[] = [
             "{ [slot]: cast_id } bindings. cast_id is the cast member's public id (the `id` " +
             "returned by list_cast / get_cast); the internal numeric row id also works.",
         },
-        bundleKey: STR("An assembled bundle key, if validating one."),
-        audioKey: STR("A staged audio bed key, if any."),
+        motionBackend: STR(
+          "A motion.backend module name (from studio_modules). When the module declares a " +
+          "duration_grid, preflight warns/errors on shots that exceed it (#707/#751).",
+        ),
+        quality: STR(
+          "draft | standard | final -- quality tier for the duration-grid clamp when motionBackend " +
+          "is set. Omitted, the module's default tier is used for the grid lookup.",
+        ),
       },
       ["storyboard"],
     ),
@@ -721,7 +730,13 @@ export const TOOLS: McpTool[] = [
       if (typeof a.storyboard !== "object" || a.storyboard === null) {
         throw new Error("missing required argument 'storyboard'");
       }
-      return { method: "POST", path: "/api/storyboard/preflight", body: bodyWithout(a) };
+      // Forward only fields the studio route reads (mcp#26). bodyWithout would still pass a
+      // stale bundleKey/audioKey from a client, but the schema no longer advertises them.
+      const body: Record<string, unknown> = { storyboard: a.storyboard };
+      if (a.castBindings !== undefined) body.castBindings = a.castBindings;
+      if (a.motionBackend !== undefined) body.motionBackend = a.motionBackend;
+      if (a.quality !== undefined) body.quality = a.quality;
+      return { method: "POST", path: "/api/storyboard/preflight", body };
     },
   },
   {

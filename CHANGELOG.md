@@ -6,10 +6,16 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+<<<<<<< HEAD
 - **Docs audit 2026-08-05:** host-vs-package deploy pointer; poll TTL aligned at 6h.
 
 
 - Nothing yet.
+=======
+- **docs(mcp): honest `preflight` schema (mcp#26).** Dropped `bundleKey` / `audioKey` (route never
+  reads them; advertising them was false confidence). Added `motionBackend` + `quality` so the
+  duration-grid clamp (#707/#751) is drivable from MCP.
+>>>>>>> origin/main
 
 ## v1.2.1 -- 2026-08-03
 

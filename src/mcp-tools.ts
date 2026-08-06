@@ -857,7 +857,7 @@ export const TOOLS: McpTool[] = [
     description:
       "GET /api/render/film/:id. Advance + poll a film job one tick. Returns { phase, clips?, finish?, " +
       "film_key?, download_url? }. Call repeatedly until phase is 'done' (a presigned download_url is " +
-      "then present, 24h TTL) or 'failed'. Phases: keyframe, clips, dialogue, speech, finish, assemble, " +
+      "then present, 6h TTL) or 'failed'. Phases: keyframe, clips, dialogue, speech, finish, assemble, " +
       "master, mux, done, failed.",
     inputSchema: OBJ({ id: STR("The film-<...> job id from submit_film.") }, ["id"]),
     build: (a) => ({

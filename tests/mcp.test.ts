@@ -40,7 +40,18 @@ describe("vivijure MCP transport", () => {
   it("serves /health without auth", async () => {
     const res = await worker.fetch(new Request("https://x/health"), ENV);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, service: "vivijure-studio-mcp" });
+    const body = (await res.json()) as {
+      ok: boolean;
+      service: string;
+      version?: string;
+      tools?: number;
+      targets?: { studio: boolean; control_plane: boolean };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.service).toBe("vivijure-studio-mcp");
+    expect(body.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(body.tools).toBeGreaterThan(40);
+    expect(body.targets?.studio).toBe(true);
   });
 
   it("fails closed with no bearer (401)", async () => {

@@ -23,7 +23,7 @@ import { TOOLS, TOOLS_BY_NAME, runTool } from "./mcp-tools.js";
 // exists got the same answer before and after a release that added one. It is not derived from
 // package.json because that would need a JSON import in the Worker bundle; the drift is prevented by
 // tests/server-info-version.test.ts instead, which fails if these two ever disagree.
-const SERVER_INFO = { name: "vivijure-studio", version: "1.2.1" };
+const SERVER_INFO = { name: "vivijure-studio", version: "1.3.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -106,7 +106,16 @@ export default {
   async fetch(request: Request, env: McpEnv): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/health") {
-      return json({ ok: true, service: "vivijure-studio-mcp" });
+      return json({
+        ok: true,
+        service: "vivijure-studio-mcp",
+        version: SERVER_INFO.version,
+        tools: TOOLS.length,
+        targets: {
+          studio: Boolean(env.STUDIO_URL && env.STUDIO_API_TOKEN),
+          control_plane: Boolean(env.CONTROL_PLANE_URL && env.CONTROL_PLANE_ADMIN_TOKEN),
+        },
+      });
     }
     if (url.pathname !== "/mcp") return json({ error: "not_found" }, 404);
 

@@ -6,6 +6,26 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+## v1.3.0 -- 2026-08-07
+
+MINOR, additive: **studio panel parity tools + hosted control-plane admin tools** (42 -> 109).
+
+- **feat(mcp): dual target.** `CONTROL_PLANE_URL` + `CONTROL_PLANE_ADMIN_TOKEN` optional bindings;
+  `StudioCall.target` selects studio vs control plane; `/health` reports which targets are armed.
+  Studio tools still work with only `STUDIO_*` configured.
+- **feat(mcp): studio panel gaps.** prefs, whoami, storage usage/reconcile, module install/config,
+  Wan cast LoRA train, cast import/export, score-bed + job poll, enhance/yaml/markers/analyze,
+  render-plan, clips submit/poll, frames, demo suite, list_models.
+- **feat(mcp): control-plane operator surface (`cp_*`).** Tenant census, upgrade studio/modules,
+  refresh bindings, invoke-key handoff, reprovision RunPod, smoke render, suspend/resume/teardown,
+  credits, preservation holds, metering, KEK, operators, settings, audit, hosted storage usage,
+  plus `control_plane_request` escape hatch.
+- **docs:** `docs/PARITY.md` honesty matrix (owner provision stays session-based; storyboard/render
+  alternate doors remain uncurated per cf#334).
+- **Still deliberate gaps:** `POST /api/tenant/provision` (owner session + AUP + key custody, not
+  admin bearer); `/api/storyboard/render*` / finalize / animate / scatter / regen curated block
+  until sound-door reconciliation (escape hatch only).
+
 - **docs(mcp): honest `preflight` schema (mcp#26).** Dropped `bundleKey` / `audioKey` (route never
   reads them; advertising them was false confidence). Added `motionBackend` + `quality` so the
   duration-grid clamp (#707/#751) is drivable from MCP.

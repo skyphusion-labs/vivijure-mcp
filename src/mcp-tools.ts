@@ -24,7 +24,10 @@ export interface StudioRawBody {
   contentType: string;
 }
 
-/** One translated studio HTTP call.
+/** HTTP target: studio CONTRACT by default, or the hosted control plane admin API. */
+export type CallTarget = "studio" | "control_plane";
+
+/** One translated HTTP call (studio or control plane).
  *
  *  `body` (JSON) and `rawBody` (bytes) are exclusive by CONSTRUCTION, not by a runtime guard: a
  *  build() that set both would not compile, so "which body wins" is not a question runTool has to
@@ -33,6 +36,8 @@ export type StudioCall = {
   method: string;
   path: string;
   query?: Record<string, string | number | undefined>;
+  /** Default `studio`. Control-plane tools set `control_plane`. */
+  target?: CallTarget;
 } & (
   | { body?: unknown; rawBody?: never }
   | { rawBody: StudioRawBody; body?: never }
@@ -951,15 +956,862 @@ export const TOOLS: McpTool[] = [
     }),
   },
 
-  // --- escape hatch -----------------------------------------------------------
+  // --- studio identity / prefs / storage / modules (1.3 panel parity) -----------
+  {
+    name: "whoami",
+    description:
+      "GET /api/whoami. Studio identity (token mode returns a fixed operator identity; no email leak).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/whoami" }),
+  },
+  {
+    name: "get_prefs",
+    description: "GET /api/prefs. Operator prefs (planner model defaults, UI knobs the panel stores).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/prefs" }),
+  },
+  {
+    name: "set_prefs",
+    description:
+      "PATCH /api/prefs. Merge operator prefs. Body is forwarded; unknown keys are the studio's rule.",
+    inputSchema: OBJ(
+      {
+        prefs: {
+          type: "object",
+          description: "Prefs object to merge (or pass fields at the top level; both are accepted).",
+        },
+      },
+    ),
+    build: (a) => {
+      const body =
+        a.prefs && typeof a.prefs === "object"
+          ? a.prefs
+          : bodyWithout(a);
+      return { method: "PATCH", path: "/api/prefs", body };
+    },
+  },
+  {
+    name: "storage_usage",
+    description:
+      "GET /api/storage/usage. Ledger usage: used_bytes, objects, quota_bytes, over.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/storage/usage" }),
+  },
+  {
+    name: "storage_reconcile",
+    description:
+      "POST /api/storage/reconcile. Rebuild the storage ledger from object store inventory (operator maintenance).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "POST", path: "/api/storage/reconcile", body: {} }),
+  },
+  {
+    name: "list_models",
+    description: "GET /api/models. Planning/chat model catalog (sibling of storyboard_models).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/models" }),
+  },
+  {
+    name: "list_installed_modules",
+    description: "GET /api/modules/installed. Installed dynamic module rows.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/modules/installed" }),
+  },
+  {
+    name: "install_module",
+    description:
+      "POST /api/modules/install. Install a module script from the dispatch namespace. Body: " +
+      "{ script_name (req) }. Needs MODULE_DISPATCH on the host.",
+    inputSchema: OBJ({ script_name: STR("Worker script name in the modules dispatch namespace.") }, [
+      "script_name",
+    ]),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/modules/install",
+      body: { script_name: reqStr(a, "script_name") },
+    }),
+  },
+  {
+    name: "uninstall_module",
+    description: "DELETE /api/modules/install/:name. Remove an installed module.",
+    inputSchema: OBJ({ name: STR("Module name.") }, ["name"]),
+    build: (a) => ({
+      method: "DELETE",
+      path: `/api/modules/install/${encodeURIComponent(reqStr(a, "name"))}`,
+    }),
+  },
+  {
+    name: "set_module_enabled",
+    description: "PATCH /api/modules/install/:name. Enable or disable an installed module.",
+    inputSchema: OBJ(
+      {
+        name: STR("Module name."),
+        enabled: { type: "boolean", description: "true = enabled, false = disabled." },
+      },
+      ["name", "enabled"],
+    ),
+    build: (a) => {
+      if (typeof a.enabled !== "boolean") throw new Error("'enabled' must be a boolean");
+      return {
+        method: "PATCH",
+        path: `/api/modules/install/${encodeURIComponent(reqStr(a, "name"))}`,
+        body: { enabled: a.enabled },
+      };
+    },
+  },
+  {
+    name: "get_module_config",
+    description:
+      "GET /api/modules/:name/config. Install-scope config for one module (defaults filled).",
+    inputSchema: OBJ({ name: STR("Module name.") }, ["name"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/modules/${encodeURIComponent(reqStr(a, "name"))}/config`,
+    }),
+  },
+  {
+    name: "patch_module_config",
+    description:
+      "PATCH /api/modules/:name/config. Patch install-scope fields only (render-scope keys dropped).",
+    inputSchema: OBJ(
+      {
+        name: STR("Module name."),
+        config: { type: "object", description: "{ field: value } install-scope patch." },
+      },
+      ["name", "config"],
+    ),
+    build: (a) => {
+      if (typeof a.config !== "object" || a.config === null) {
+        throw new Error("missing required argument 'config'");
+      }
+      return {
+        method: "PATCH",
+        path: `/api/modules/${encodeURIComponent(reqStr(a, "name"))}/config`,
+        body: a.config,
+      };
+    },
+  },
+  {
+    name: "train_cast_wan_lora",
+    description:
+      "POST /api/cast/:id/train-wan-lora. THIS SPENDS GPU (Wan cast LoRA train). Needs " +
+      "RUNPOD_WAN_TRAIN_ENDPOINT_ID on the host. Sibling of train_cast_lora (SDXL).",
+    inputSchema: OBJ(
+      {
+        id: STR("Cast member id."),
+        renderOverrides: { type: "object", description: "Optional train overrides." },
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/train-wan-lora`,
+      body: bodyWithout(a, "id"),
+    }),
+  },
+  {
+    name: "export_cast",
+    description:
+      "GET /api/cast/export/:id. Export a .vvcast tar bundle. Binary is summarized (not dumped); " +
+      "use studio_request + a client that can store bytes, or host-side export, for the file itself.",
+    inputSchema: OBJ({ id: STR("Cast member id.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/cast/export/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+  {
+    name: "import_cast",
+    description:
+      "POST /api/cast/import. Import a .vvcast tar (raw body). Pass data_base64 of the tar bytes; " +
+      "mime application/x-tar. Returns the imported cast member.",
+    inputSchema: OBJ(
+      {
+        data_base64: STR("The .vvcast tar bytes, base64-encoded."),
+        mime: STR("Usually application/x-tar."),
+      },
+      ["data_base64", "mime"],
+    ),
+    build: (a) => ({ method: "POST", path: "/api/cast/import", rawBody: rawBytesArg(a) }),
+  },
+  {
+    name: "score_bed",
+    description:
+      "POST /api/storyboard/score-bed (music generate). Starts a score/music job. Poll with poll_job.",
+    inputSchema: OBJ(
+      {
+        storyboard: { type: "object", description: "Storyboard context for the score." },
+        prompt: STR("Optional music prompt override."),
+      },
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/storyboard/score-bed",
+      body: bodyWithout(a),
+    }),
+  },
+  {
+    name: "poll_job",
+    description:
+      "GET /api/job/:id. Poll a generic studio job (score-bed, enhance, etc.) until done/failed.",
+    inputSchema: OBJ({ id: STR("Job id from score_bed or similar.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/job/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+  {
+    name: "enhance_storyboard",
+    description: "POST /api/storyboard/enhance. LLM enhance pass on a storyboard (inference spend).",
+    inputSchema: OBJ(
+      { storyboard: { type: "object", description: "Storyboard to enhance." } },
+      ["storyboard"],
+    ),
+    build: (a) => {
+      if (typeof a.storyboard !== "object" || a.storyboard === null) {
+        throw new Error("missing required argument 'storyboard'");
+      }
+      return { method: "POST", path: "/api/storyboard/enhance", body: bodyWithout(a) };
+    },
+  },
+  {
+    name: "storyboard_yaml",
+    description: "POST /api/storyboard/yaml. Convert / validate storyboard YAML forms.",
+    inputSchema: OBJ(
+      {
+        yaml: STR("YAML text."),
+        storyboard: { type: "object", description: "Or pass a storyboard object." },
+      },
+    ),
+    build: (a) => ({ method: "POST", path: "/api/storyboard/yaml", body: bodyWithout(a) }),
+  },
+  {
+    name: "storyboard_markers",
+    description: "POST /api/storyboard/markers. Derive markers from a storyboard / audio analysis.",
+    inputSchema: OBJ(
+      { storyboard: { type: "object", description: "Storyboard context." } },
+    ),
+    build: (a) => ({ method: "POST", path: "/api/storyboard/markers", body: bodyWithout(a) }),
+  },
+  {
+    name: "audio_analyze",
+    description: "POST /api/audio/analyze. Analyze a staged audio key for beats/markers.",
+    inputSchema: OBJ(
+      { key: STR("Audio artifact key (from upload_audio).") },
+      ["key"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/audio/analyze",
+      body: bodyWithout(a),
+    }),
+  },
+  {
+    name: "render_plan",
+    description:
+      "POST /api/storyboard/render-plan. Build a render plan without starting a spend render.",
+    inputSchema: OBJ(
+      { storyboard: { type: "object", description: "Storyboard to plan." } },
+      ["storyboard"],
+    ),
+    build: (a) => {
+      if (typeof a.storyboard !== "object" || a.storyboard === null) {
+        throw new Error("missing required argument 'storyboard'");
+      }
+      return { method: "POST", path: "/api/storyboard/render-plan", body: bodyWithout(a) };
+    },
+  },
+  {
+    name: "submit_clips",
+    description:
+      "POST /api/render/clips. Start a clips-only render (SPENDS). Poll with poll_clips. " +
+      "Prefer submit_film for full films; this is the clips sub-pipeline.",
+    inputSchema: OBJ(
+      {
+        bundle_key: STR("Bundle key from bundle_storyboard."),
+        scenes: ARR("[{ shot_id, prompt, seconds }]"),
+      },
+      ["bundle_key", "scenes"],
+    ),
+    build: (a) => {
+      reqStr(a, "bundle_key");
+      if (!Array.isArray(a.scenes) || a.scenes.length === 0) {
+        throw new Error("missing required argument 'scenes' (non-empty array)");
+      }
+      return { method: "POST", path: "/api/render/clips", body: bodyWithout(a) };
+    },
+  },
+  {
+    name: "poll_clips",
+    description: "GET /api/render/clips/:id. Poll a clips job from submit_clips.",
+    inputSchema: OBJ({ id: STR("Clips job id.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/render/clips/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+  {
+    name: "render_frames",
+    description:
+      "POST /api/render/frames. Extract still frames from a render artifact (panel frame picker).",
+    inputSchema: OBJ(
+      {
+        key: STR("Video artifact key."),
+        times: ARR("Optional timestamps."),
+      },
+      ["key"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/render/frames",
+      body: bodyWithout(a),
+    }),
+  },
+  {
+    name: "demo_menu",
+    description: "GET /api/demo/menu. Curated demo path menu (when the host enables demo mode).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/demo/menu" }),
+  },
+  {
+    name: "demo_chat",
+    description: "POST /api/demo/chat. Demo-mode chat (curated, no open spend).",
+    inputSchema: OBJ(
+      { user_input: STR("Prompt."), model: STR("Optional model id.") },
+      ["user_input"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/demo/chat",
+      body: bodyWithout(a),
+    }),
+  },
+  {
+    name: "demo_render",
+    description: "POST /api/demo/render. Start a demo render. Poll with poll_demo_render.",
+    inputSchema: OBJ(
+      { id: STR("Demo recipe id from demo_menu.") },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/demo/render",
+      body: bodyWithout(a),
+    }),
+  },
+  {
+    name: "poll_demo_render",
+    description: "GET /api/demo/render/:id. Poll a demo render job.",
+    inputSchema: OBJ({ id: STR("Demo render job id.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/demo/render/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+
+  // --- control plane (hosted platform admin; needs CONTROL_PLANE_* bindings) ---
+  {
+    name: "cp_whoami",
+    description:
+      "GET /api/admin/whoami. Operator identity + scopes for CONTROL_PLANE_ADMIN_TOKEN. " +
+      "Call first when driving hosted ops.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/admin/whoami", target: "control_plane" }),
+  },
+  {
+    name: "cp_platform_config",
+    description:
+      "GET /api/platform/config. Public front-door projection (auth methods, signups flags). " +
+      "No admin token required by the plane, but this Worker still sends the admin bearer if set.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/platform/config", target: "control_plane" }),
+  },
+  {
+    name: "cp_platform_version",
+    description: "GET /api/platform/version. Control plane + pinned studio release on the wire.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/platform/version", target: "control_plane" }),
+  },
+  {
+    name: "cp_list_tenants",
+    description:
+      "GET /api/admin/tenants. Hosted tenant census (slug, status, suspended, account). " +
+      "Requires tenants:read. This is how you find ten_ ids for bootstrap follow-ups.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/admin/tenants", target: "control_plane" }),
+  },
+  {
+    name: "cp_get_settings",
+    description: "GET /api/admin/settings. Platform settings (e.g. signups_enabled).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/admin/settings", target: "control_plane" }),
+  },
+  {
+    name: "cp_set_settings",
+    description:
+      "POST /api/admin/settings. Flip platform settings (platform:settings). Body e.g. " +
+      "{ signups_enabled: true|false }. Closing signups does not strand mid-onboarding accounts.",
+    inputSchema: OBJ(
+      {
+        signups_enabled: {
+          type: "boolean",
+          description: "When set, updates the waitlist/signups gate.",
+        },
+      },
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/admin/settings",
+      body: bodyWithout(a),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_list_audit",
+    description: "GET /api/admin/audit. Operator audit trail (tenants:read).",
+    inputSchema: OBJ(
+      {
+        limit: NUM("Optional page size."),
+        cursor: STR("Optional cursor."),
+      },
+    ),
+    build: (a) => ({
+      method: "GET",
+      path: "/api/admin/audit",
+      query: {
+        limit: a.limit as number | undefined,
+        cursor: a.cursor as string | undefined,
+      },
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_hosted_storage_usage",
+    description: "GET /api/admin/r2-usage. Aggregate hosted R2 usage (not per-tenant content).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/admin/r2-usage", target: "control_plane" }),
+  },
+  {
+    name: "cp_reconcile_runpod",
+    description:
+      "POST /api/admin/reconcile/runpod. Operator brings a RunPod snapshot; plane reconciles " +
+      "endpoint inventory (tenants:read).",
+    inputSchema: OBJ(
+      { body: { type: "object", description: "Reconciliation payload the plane expects." } },
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/admin/reconcile/runpod",
+      body: a.body && typeof a.body === "object" ? a.body : bodyWithout(a),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_llm_meter_run",
+    description: "POST /api/admin/llm-meter/run. Force an LLM spend ingest tick (meter:operate).",
+    inputSchema: OBJ({}),
+    build: () => ({
+      method: "POST",
+      path: "/api/admin/llm-meter/run",
+      body: {},
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_meter_settle",
+    description:
+      "POST /api/admin/meter-settle. Force overage settlement from measured usage (meter:operate). " +
+      "Not credits:write (does not mint money from nothing).",
+    inputSchema: OBJ({}),
+    build: () => ({
+      method: "POST",
+      path: "/api/admin/meter-settle",
+      body: {},
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_llm_spend",
+    description: "GET /api/admin/llm-spend. LLM spend rollups (tenants:read).",
+    inputSchema: OBJ(
+      {
+        tenant_id: STR("Optional ten_ filter."),
+      },
+    ),
+    build: (a) => ({
+      method: "GET",
+      path: "/api/admin/llm-spend",
+      query: { tenant_id: a.tenant_id as string | undefined },
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_kek_status",
+    description: "GET /api/admin/kek/status. KEK rotation status (keys:rotate).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/admin/kek/status", target: "control_plane" }),
+  },
+  {
+    name: "cp_kek_reencrypt",
+    description: "POST /api/admin/kek/reencrypt. Start KEK re-encryption sweep (keys:rotate).",
+    inputSchema: OBJ({}),
+    build: () => ({
+      method: "POST",
+      path: "/api/admin/kek/reencrypt",
+      body: {},
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_list_operators",
+    description: "GET /api/admin/operators. List operator credentials (root only).",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/admin/operators", target: "control_plane" }),
+  },
+  {
+    name: "cp_create_operator",
+    description:
+      "POST /api/admin/operators. Mint a scoped operator credential (root only). Plaintext token " +
+      "is returned ONCE -- store it; the plane keeps only a hash.",
+    inputSchema: OBJ(
+      {
+        name: STR("Operator display name (unique among live credentials)."),
+        scopes: ARR("Scope strings from the catalogue (tenants:read, studio:operate, ...)."),
+        expires_at: STR("Optional ISO expiry."),
+      },
+      ["name", "scopes"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: "/api/admin/operators",
+      body: bodyWithout(a),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_revoke_operator",
+    description: "POST /api/admin/operators/:id/revoke. Soft-revoke an opc_ credential (root only).",
+    inputSchema: OBJ({ id: STR("opc_… credential id.") }, ["id"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/operators/${encodeURIComponent(reqStr(a, "id"))}/revoke`,
+      body: {},
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_credits",
+    description: "GET /api/admin/tenants/:id/credits. Prepaid credit balance (tenants:read).",
+    inputSchema: OBJ({ id: STR("ten_… tenant id.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/credits`,
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_credits_manual",
+    description:
+      "POST /api/admin/tenants/:id/credits/manual. Manual credit grant/debit (credits:write). " +
+      "Mints or removes money; require a real reason in the body.",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_… tenant id."),
+        amount_micro_usd: NUM("Signed integer micro-USD delta (plane unit)."),
+        reason: STR("Audit reason (required by plane policy)."),
+        operator_claimed: STR("Optional claimed operator name on legacy rails."),
+      },
+      ["id", "reason"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/credits/manual`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_module_readiness",
+    description:
+      "GET /api/admin/tenants/:id/module-readiness. What the tenant's module workers report " +
+      "(tenants:read). Use after upgrade/bootstrap to verify doors.",
+    inputSchema: OBJ({ id: STR("ten_… tenant id.") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/module-readiness`,
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_suspend",
+    description:
+      "POST /api/admin/tenants/:id/suspend. Pull routing immediately (tenants:write). reason required.",
+    inputSchema: OBJ(
+      { id: STR("ten_…"), reason: STR("Why (audit; refused if empty).") },
+      ["id", "reason"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/suspend`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_resume",
+    description: "POST /api/admin/tenants/:id/resume. Clear suspension (tenants:write).",
+    inputSchema: OBJ(
+      { id: STR("ten_…"), reason: STR("Why (audit).") },
+      ["id", "reason"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/resume`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_teardown",
+    description:
+      "POST /api/admin/tenants/:id/teardown. IRREVERSIBLE destroy (tenants:destroy). Empties R2, " +
+      "deletes Worker/D1 bindings per plane policy. Refused under a preservation hold.",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_…"),
+        reason: STR("Why (audit)."),
+        confirm: STR("Must be the tenant slug or id as the plane requires."),
+      },
+      ["id", "reason"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/teardown`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_upgrade_studio",
+    description:
+      "POST /api/admin/tenants/:id/upgrade-studio. Push the pinned published studio release to the " +
+      "tenant Worker (studio:operate). Primary bootstrap/repair after provision.",
+    inputSchema: OBJ(
+      { id: STR("ten_…"), to_release: STR("Optional release pin override.") },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/upgrade-studio`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_upgrade_modules",
+    description:
+      "POST /api/admin/tenants/:id/upgrade-modules. Upgrade tenant module workers (studio:operate).",
+    inputSchema: OBJ(
+      { id: STR("ten_…"), from_release: STR("Optional from pin."), to_release: STR("Optional to pin.") },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/upgrade-modules`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_refresh_bindings",
+    description:
+      "POST /api/admin/tenants/:id/refresh-studio-bindings. Re-apply studio bindings/secrets " +
+      "(studio:operate). Use after binding drift.",
+    inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/refresh-studio-bindings`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_invoke_key_handoff",
+    description:
+      "POST /api/admin/tenants/:id/invoke-key-handoff. Mint owner handoff for RunPod invoke key B " +
+      "(studio:operate). Owner completes unauthenticated /api/handoff/invoke-key.",
+    inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/invoke-key-handoff`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_reprovision_runpod",
+    description:
+      "POST /api/admin/tenants/:id/reprovision-runpod. Rebuild RunPod endpoints for a live tenant " +
+      "(studio:operate). Needs a transient provisioning key per plane custody rules.",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_…"),
+        runpod_api_key: STR("Transient Key A (never stored by the plane)."),
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/reprovision-runpod`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_smoke_render",
+    description:
+      "POST /api/admin/tenants/:id/smoke-render. SPENDS GPU: fire a smoke film through the tenant " +
+      "studio (studio:operate). Poll with cp_poll_smoke_render.",
+    inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/smoke-render`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_poll_smoke_render",
+    description: "GET /api/admin/tenants/:id/smoke-render/:smk. Poll smoke render status (tenants:read).",
+    inputSchema: OBJ(
+      { id: STR("ten_…"), smoke_id: STR("smk_… job id.") },
+      ["id", "smoke_id"],
+    ),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/smoke-render/${encodeURIComponent(reqStr(a, "smoke_id"))}`,
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_abuse_report_url",
+    description:
+      "POST /api/admin/tenants/:id/abuse-report-url. Converge host.abuse_report_url onto the tenant " +
+      "studio (tenants:write). Hosted-only by construction.",
+    inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/abuse-report-url`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_storage_quota",
+    description: "POST /api/admin/tenants/:id/storage-quota. Set tenant storage quota (tenants:write).",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_…"),
+        quota_bytes: NUM("Quota in bytes, or null to clear (plane rules apply)."),
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/storage-quota`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_video_finish_binding",
+    description:
+      "POST /api/admin/tenants/:id/video-finish-binding. Converge video-finish module binding " +
+      "(tenants:write).",
+    inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/video-finish-binding`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_tenant_video_finish_tier_state",
+    description:
+      "POST /api/admin/tenants/:id/video-finish-tier-state. Mark finish tier reachable/unreachable " +
+      "(tenants:write).",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_…"),
+        unreachable: { type: "boolean", description: "true = mark unreachable." },
+      },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/video-finish-tier-state`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_list_preservation_holds",
+    description: "GET /api/admin/tenants/:id/preservation-holds. List holds (tenants:read).",
+    inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
+    build: (a) => ({
+      method: "GET",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/preservation-holds`,
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_open_preservation_hold",
+    description:
+      "POST /api/admin/tenants/:id/preservation-holds. Open a statutory hold (tenants:write). " +
+      "Blocks teardown until human release.",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_…"),
+        reason: STR("Why the hold exists."),
+        kind: STR("Hold kind if the plane distinguishes clocks."),
+      },
+      ["id", "reason"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/preservation-holds`,
+      body: bodyWithout(a, "id"),
+      target: "control_plane",
+    }),
+  },
+  {
+    name: "cp_release_preservation_hold",
+    description:
+      "POST /api/admin/tenants/:id/preservation-holds/:hold_id/release. Human release only " +
+      "(tenants:write). Clocks never auto-release.",
+    inputSchema: OBJ(
+      {
+        id: STR("ten_…"),
+        hold_id: STR("hold_…"),
+        reason: STR("Why releasing."),
+      },
+      ["id", "hold_id", "reason"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/preservation-holds/${encodeURIComponent(reqStr(a, "hold_id"))}/release`,
+      body: bodyWithout(a, "id", "hold_id"),
+      target: "control_plane",
+    }),
+  },
+
+  // --- escape hatches -----------------------------------------------------------
   {
     name: "studio_request",
     description:
       "Generic escape hatch to ANY studio route in docs/CONTRACT.md not covered by a curated tool " +
-      "(e.g. render/clips, scatter, renders PATCH/DELETE, prefs, cast LoRA training, cast bundle " +
-      "import/export). Sends method + path (+ optional query, JSON body) with the studio bearer and " +
-      "returns the JSON reply. Binary routes (artifact bytes, cast .vvcast export) are summarized, " +
-      "not dumped. path must start with '/'.",
+      "(e.g. storyboard/render doors that remain uncurated until cf#334 sound reconciliation, " +
+      "settings/secrets if present on the host). JSON only; binary summarized. path must start with '/'.",
     inputSchema: OBJ(
       {
         method: {
@@ -969,38 +1821,67 @@ export const TOOLS: McpTool[] = [
         },
         path: STR("Studio path starting with '/', e.g. '/api/storyboard/renders/tags'."),
         query: { type: "object", description: "Optional query params (string/number values)." },
-        // Object is canonical; string stays legal because schema-validating MCP clients serialize an
-        // untyped/union arg as a JSON string (#575) -- build() re-parses it so the studio always
-        // receives the real object, never a JSON-quoted string.
-        body: { type: ["object", "string"], description: "Optional JSON request body (object, or a JSON-encoded string)." },
+        body: {
+          type: ["object", "string"],
+          description: "Optional JSON request body (object, or a JSON-encoded string).",
+        },
       },
       ["method", "path"],
     ),
-    build: (a) => {
-      const method = String(a.method ?? "").toUpperCase();
-      if (!["GET", "POST", "PATCH", "PUT", "DELETE"].includes(method)) {
-        throw new Error(`invalid method '${String(a.method)}'`);
-      }
-      const path = reqStr(a, "path");
-      if (!path.startsWith("/")) throw new Error("path must start with '/'");
-      const query =
-        a.query && typeof a.query === "object"
-          ? (a.query as Record<string, string | number | undefined>)
-          : undefined;
-      // #575: a string body from a schema-validating client is a JSON-encoded object -- unwrap it so
-      // the studio never receives a JSON-quoted string. A non-JSON string is a bad argument, said so.
-      let body = a.body;
-      if (typeof body === "string" && body.trim() !== "") {
-        try {
-          body = JSON.parse(body);
-        } catch {
-          throw new Error("body must be a JSON object (or a JSON-encoded string that parses to one)");
-        }
-      }
-      return { method, path, query, body };
-    },
+    build: (a) => genericRequest(a, "studio"),
+  },
+  {
+    name: "control_plane_request",
+    description:
+      "Escape hatch to ANY vivijure-control-plane path (admin or public). Uses " +
+      "CONTROL_PLANE_ADMIN_TOKEN. Prefer curated cp_* tools. path must start with '/'. " +
+      "Note: tenant self-serve provision (POST /api/tenant/provision) needs an account session " +
+      "cookie, not the admin bearer -- owners provision via the front door; operators use admin " +
+      "lifecycle tools after the tenant exists.",
+    inputSchema: OBJ(
+      {
+        method: {
+          type: "string",
+          enum: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+          description: "HTTP method.",
+        },
+        path: STR("Control-plane path starting with '/', e.g. '/api/admin/tenants'."),
+        query: { type: "object", description: "Optional query params." },
+        body: {
+          type: ["object", "string"],
+          description: "Optional JSON body.",
+        },
+      },
+      ["method", "path"],
+    ),
+    build: (a) => genericRequest(a, "control_plane"),
   },
 ];
+
+function genericRequest(
+  a: Record<string, unknown>,
+  target: CallTarget,
+): StudioCall {
+  const method = String(a.method ?? "").toUpperCase();
+  if (!["GET", "POST", "PATCH", "PUT", "DELETE"].includes(method)) {
+    throw new Error(`invalid method '${String(a.method)}'`);
+  }
+  const path = reqStr(a, "path");
+  if (!path.startsWith("/")) throw new Error("path must start with '/'");
+  const query =
+    a.query && typeof a.query === "object"
+      ? (a.query as Record<string, string | number | undefined>)
+      : undefined;
+  let body = a.body;
+  if (typeof body === "string" && body.trim() !== "") {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      throw new Error("body must be a JSON object (or a JSON-encoded string that parses to one)");
+    }
+  }
+  return { method, path, query, body, target };
+}
 
 export const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
@@ -1015,8 +1896,17 @@ function trimTrailingSlashes(s: string): string {
 }
 
 export function studioUrl(env: McpEnv, call: StudioCall): string {
-  const base = trimTrailingSlashes(env.STUDIO_URL ?? "");
-  if (!base) throw new Error("STUDIO_URL is not configured");
+  const target: CallTarget = call.target ?? "studio";
+  const baseRaw =
+    target === "control_plane" ? env.CONTROL_PLANE_URL : env.STUDIO_URL;
+  const base = trimTrailingSlashes(baseRaw ?? "");
+  if (!base) {
+    throw new Error(
+      target === "control_plane"
+        ? "CONTROL_PLANE_URL is not configured"
+        : "STUDIO_URL is not configured",
+    );
+  }
   const url = new URL(base + call.path);
   if (call.query) {
     for (const [k, v] of Object.entries(call.query)) {
@@ -1061,9 +1951,22 @@ export async function runTool(
   call: StudioCall,
   opts: { inlineImages?: boolean } = {},
 ): Promise<{ content: McpContent[]; isError: boolean }> {
-  if (!env.STUDIO_API_TOKEN) {
+  const target: CallTarget = call.target ?? "studio";
+  const bearer =
+    target === "control_plane"
+      ? env.CONTROL_PLANE_ADMIN_TOKEN
+      : env.STUDIO_API_TOKEN;
+  if (!bearer) {
     return {
-      content: [{ type: "text", text: "MCP is not configured: STUDIO_API_TOKEN is unset." }],
+      content: [
+        {
+          type: "text",
+          text:
+            target === "control_plane"
+              ? "MCP control plane is not configured: CONTROL_PLANE_ADMIN_TOKEN is unset."
+              : "MCP is not configured: STUDIO_API_TOKEN is unset.",
+        },
+      ],
       isError: true,
     };
   }
@@ -1075,7 +1978,7 @@ export async function runTool(
     return { content: [{ type: "text", text: String(err) }], isError: true };
   }
 
-  const headers: Record<string, string> = { Authorization: `Bearer ${env.STUDIO_API_TOKEN}` };
+  const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
   const init: RequestInit = { method: call.method, headers };
   const sendsBody = call.method !== "GET" && call.method !== "DELETE";
   if (call.rawBody !== undefined && sendsBody) {
@@ -1094,7 +1997,12 @@ export async function runTool(
     res = await fetch(url, init);
   } catch (err) {
     return {
-      content: [{ type: "text", text: `Studio request failed (transport): ${String(err)}` }],
+      content: [
+        {
+          type: "text",
+          text: `${target === "control_plane" ? "Control plane" : "Studio"} request failed (transport): ${String(err)}`,
+        },
+      ],
       isError: true,
     };
   }

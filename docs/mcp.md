@@ -80,6 +80,8 @@ The Worker needs exactly three values:
 | `STUDIO_URL` | var (in `wrangler.mcp.toml`) | The base URL of your studio, e.g. `https://studio.example.com`. No trailing slash needed (it is normalized). |
 | `STUDIO_API_TOKEN` | secret | The studio bearer the MCP presents on every forwarded call (the named consumer token from above). |
 | `MCP_TOKEN` | secret | The gate. Every agent request must carry `Authorization: Bearer <MCP_TOKEN>`. |
+| `CONTROL_PLANE_URL` | var (optional) | Hosted control plane base, e.g. `https://studio.vivijure.com`. Enables `cp_*` tools. |
+| `CONTROL_PLANE_ADMIN_TOKEN` | secret (optional) | Admin/operator bearer for `/api/admin/*`. Distinct from the studio token. |
 
 The two secrets are seeded once, out-of-band, never in CI.
 
@@ -127,7 +129,7 @@ curl -s https://studio-mcp.example.com/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-You should get a JSON-RPC result listing all 42 tools. The same request **without** the header must
+You should get a JSON-RPC result listing all 109 tools. The same request **without** the header must
 return `401` -- if it does not, stop and check your `MCP_TOKEN` seeding before wiring any client.
 
 Note the split: a missing or wrong `MCP_TOKEN` fails at the door (`401`), but a missing or wrong
@@ -194,7 +196,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-**42** tools in **9** groups. Arguments marked **(required)** must be present; everything else is
+**109** tools in **13** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -210,6 +212,18 @@ are the only legal `voice_id` values for `update_cast`.
 
 **`storyboard_models`** -- `GET /api/storyboard/models`. No arguments. The planning model catalog:
 the model ids accepted by `plan_storyboard`, `refine_storyboard`, and `chat`.
+
+**`list_models`** -- `GET /api/models`. Sibling model catalog.
+
+**`whoami`** -- `GET /api/whoami`.
+
+**`get_prefs`** -- `GET /api/prefs`.
+
+**`storage_usage`** -- `GET /api/storage/usage`.
+
+**`list_installed_modules`** -- `GET /api/modules/installed`.
+
+**`get_module_config`** -- `GET /api/modules/:name/config`.
 
 **`list_cast`** -- `GET /api/cast`. No arguments. Every cast member: id, name, bible, portrait,
 LoRA status, voice.
@@ -302,6 +316,10 @@ Trains the character's identity LoRA and banks the adapter back onto the member,
 trained **once** and reused across every project.
 - `id` (required): the cast member's public id.
 - `renderOverrides`: optional training overrides.
+
+**`train_cast_wan_lora`** -- `POST /api/cast/:id/train-wan-lora` (Wan train; spends GPU).
+
+**`export_cast`** / **`import_cast`** -- `.vvcast` tar export/import.
 
 **`cast_lora_status`** -- `GET /api/cast/:id/lora-status`. Poll after training.
 - `id` (required): the cast member's public id.
@@ -414,6 +432,8 @@ from the schema. Validate a bed via the render path, not preflight.
 A text model returns `{ output }`. An image model returns `{ output_artifact: { key, mime } }`;
 feed that `key` to `set_cast_portrait`.
 
+Additional planning/helpers: **`enhance_storyboard`**, **`storyboard_yaml`**, **`storyboard_markers`**, **`audio_analyze`**, **`render_plan`**, **`score_bed`**, **`poll_job`**.
+
 ### Render (SPENDS MONEY)
 
 **`bundle_storyboard`** -- `POST /api/storyboard/bundle`. Assemble a render bundle (storyboard +
@@ -474,6 +494,10 @@ slot (via `cast_loras`); only when nothing maps does it fall to the studio defau
 cast member "has a voice in the UI" but the film speaks with the default, you forgot `cast_loras`.
 
 Returns `{ film_id, phase }`. Nothing renders any further unless you poll.
+
+**`submit_clips`** / **`poll_clips`** -- clips-only spend path.
+
+**`render_frames`** -- still extraction.
 
 **`poll_film`** -- `GET /api/render/film/:id`. Advance and poll a film job **one tick**. The
 pipeline moves when you poll, so poll steadily (every 10 to 30 seconds is plenty) until it settles.
@@ -540,23 +564,79 @@ watched: the link opens directly in a browser with no studio credential.
 Requires studio-side support for `/api/artifact-url` (vivijure-cf, cf#317). Against an older studio
 this tool returns a `404` as data, which is the honest answer rather than a broken link.
 
+### Studio settings and modules (write)
+
+**`set_prefs`** -- `PATCH /api/prefs`.
+
+**`storage_reconcile`** -- `POST /api/storage/reconcile`.
+
+**`install_module`** / **`uninstall_module`** / **`set_module_enabled`** -- install registry.
+
+**`patch_module_config`** -- install-scope config patch.
+
+### Demo mode
+
+**`demo_menu`**, **`demo_chat`**, **`demo_render`**, **`poll_demo_render`** -- curated demo path when the host enables it.
+
+### Control plane (platform)
+
+Requires `CONTROL_PLANE_URL` + `CONTROL_PLANE_ADMIN_TOKEN`. See [PARITY.md](PARITY.md) for bootstrap vs owner provision.
+
+**`cp_whoami`** -- operator identity and scopes.
+
+**`cp_platform_config`** -- public front-door config projection.
+
+**`cp_platform_version`** -- plane + pinned studio release.
+
+**`cp_get_settings`** / **`cp_set_settings`** -- platform settings (signups gate).
+
+**`cp_list_audit`** -- operator audit trail.
+
+**`cp_hosted_storage_usage`** -- aggregate hosted R2 usage (`GET /api/admin/r2-usage`).
+
+**`cp_reconcile_runpod`** -- RunPod inventory reconcile.
+
+**`cp_llm_meter_run`** / **`cp_meter_settle`** / **`cp_llm_spend`** -- metering pipeline.
+
+**`cp_kek_status`** / **`cp_kek_reencrypt`** -- KEK rotation.
+
+**`cp_list_operators`** / **`cp_create_operator`** / **`cp_revoke_operator`** -- operator credentials (root).
+
+### Control plane (tenants)
+
+**`cp_list_tenants`** -- hosted tenant census.
+
+**`cp_tenant_credits`** / **`cp_tenant_credits_manual`** -- prepaid credits.
+
+**`cp_tenant_module_readiness`** -- module worker readiness after bootstrap.
+
+**`cp_tenant_suspend`** / **`cp_tenant_resume`** -- kill switch.
+
+**`cp_tenant_teardown`** -- irreversible destroy (`tenants:destroy`).
+
+**`cp_tenant_upgrade_studio`** / **`cp_tenant_upgrade_modules`** -- push published pins.
+
+**`cp_tenant_refresh_bindings`** -- re-apply studio bindings.
+
+**`cp_tenant_invoke_key_handoff`** -- mint owner invoke-key handoff.
+
+**`cp_tenant_reprovision_runpod`** -- rebuild RunPod endpoints.
+
+**`cp_tenant_smoke_render`** / **`cp_poll_smoke_render`** -- spend smoke film.
+
+**`cp_tenant_abuse_report_url`** -- converge abuse link.
+
+**`cp_tenant_storage_quota`** -- storage quota.
+
+**`cp_tenant_video_finish_binding`** / **`cp_tenant_video_finish_tier_state`** -- finish tier.
+
+**`cp_list_preservation_holds`** / **`cp_open_preservation_hold`** / **`cp_release_preservation_hold`** -- statutory holds.
+
 ### Escape hatch
 
-**`studio_request`** -- any studio route in [CONTRACT.md](CONTRACT.md) that has no curated tool
-(render/clips, scatter, prefs, module install-config, cast bundle import/export, ...).
-- `method` (required): one of `GET`, `POST`, `PATCH`, `PUT`, `DELETE`.
-- `path` (required): the studio path, starting with `/`, e.g. `/api/storyboard/renders/tags`.
-- `query`: optional query params (string/number values).
-- `body`: optional JSON request body.
+**`studio_request`** -- any studio CONTRACT path (JSON).
 
-Same bearer, same result formatting, same binary summarization as every other tool. It is a raw
-pass-through: anything the studio bearer can do, this can do, including spend and delete routes.
-
-**One documented exception, and it is a class rather than a route.** `studio_request` always sends
-`application/json`, so it cannot reach a route that reads a RAW body -- `/api/upload`,
-`/api/storyboard/audio-upload`, `/api/storyboard/character-ref`, and the binary form of the cast
-media routes. Those answer `400` on the content-type before they look at anything else. Use
-`upload_image` / `upload_audio` for the first two; the third has no tool yet.
+**`control_plane_request`** -- any control-plane path (admin bearer). Owner provision stays session-based; see PARITY.md.
 
 ## A render, end to end
 
@@ -572,7 +652,11 @@ The full happy path, with the arguments that matter. Steps 1 through 4 are free;
 4. **`bundle_storyboard`** with `{ storyboard, characterRefs }` -- keep the returned `bundleKey`.
 5. **`submit_film`** with `{ bundle_key, scenes, motion_backend, keyframe_config: { quality_tier } }`
    -- keep the returned `film_id`. **This is the spend line.**
-6. **`poll_film`** with `{ id: film_id }` every 10 to 30 seconds. Watch `phase` walk the pipeline;
+6. **`submit_clips`** / **`poll_clips`** -- clips-only spend path.
+
+**`render_frames`** -- still extraction.
+
+**`poll_film`** with `{ id: film_id }` every 10 to 30 seconds. Watch `phase` walk the pipeline;
    stop on `done` (grab `download_url`, valid 6h) or `failed` (read the per-shot error, fix,
    resubmit).
 

@@ -6,6 +6,9 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **docs:** full README front door; complete 1.3 tool reference (settings, demo, control plane);
+  control-plane deploy section, hosted ops walkthrough, expanded troubleshooting; PARITY cross-link.
+
 ## v1.3.0 -- 2026-08-07
 
 MINOR, additive: **studio panel parity tools + hosted control-plane admin tools** (42 -> 109).

@@ -20,13 +20,16 @@ what is written here. If a step does not work, see [Troubleshooting](#troublesho
 - [Why a separate Worker](#why-a-separate-worker)
 - [Before you start](#before-you-start)
 - [Deploy the MCP Worker](#deploy-the-mcp-worker)
+- [Optional: control plane target](#optional-control-plane-target)
 - [Check that it works](#check-that-it-works)
 - [Connect your agent](#connect-your-agent)
 - [How tool calls behave](#how-tool-calls-behave)
 - [Tool reference](#tool-reference) (every tool, with arguments)
 - [A render, end to end](#a-render-end-to-end)
+- [Hosted tenant ops, end to end](#hosted-tenant-ops-end-to-end)
 - [Security boundary](#security-boundary)
 - [Troubleshooting](#troubleshooting)
+- [Parity](#parity)
 - [Files](#files)
 
 ## Why a separate Worker
@@ -44,6 +47,7 @@ what is written here. If a step does not work, see [Troubleshooting](#troublesho
 flowchart LR
   Agent["Agent (Cursor / Claude Code)"] -->|"POST /mcp  Bearer MCP_TOKEN"| MCP["vivijure-studio-mcp"]
   MCP -->|"Bearer STUDIO_API_TOKEN"| Studio["Studio core (STUDIO_URL)"]
+  MCP -->|"Bearer CONTROL_PLANE_ADMIN_TOKEN"| CP["Control plane (optional)"]
   Studio -->|"download_url (presigned 6h)"| Agent
 ```
 
@@ -83,7 +87,8 @@ The Worker needs exactly three values:
 | `CONTROL_PLANE_URL` | var (optional) | Hosted control plane base, e.g. `https://studio.vivijure.com`. Enables `cp_*` tools. |
 | `CONTROL_PLANE_ADMIN_TOKEN` | secret (optional) | Admin/operator bearer for `/api/admin/*`. Distinct from the studio token. |
 
-The two secrets are seeded once, out-of-band, never in CI.
+Studio + MCP gate secrets are seeded once, out-of-band, never in CI. Control-plane secrets are
+optional (see [Optional: control plane target](#optional-control-plane-target)).
 
 ```sh
 # 1. Render wrangler.mcp.toml from the committed example (host + studio URL), or copy the example
@@ -110,6 +115,33 @@ set in CI; seed them once with steps 3 and 4 above and they survive redeploys.
 
 **Local dev:** `npm run dev:mcp` runs the Worker under `wrangler dev` against whatever
 `STUDIO_URL` your rendered `wrangler.mcp.toml` points at.
+
+## Optional: control plane target
+
+For **hosted** multi-tenant ops (upgrade a tenant studio, smoke render, suspend, credits), the same
+MCP Worker can forward to [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane).
+
+1. Add to `[vars]` in `wrangler.mcp.toml`:
+
+   ```toml
+   CONTROL_PLANE_URL = "https://studio.vivijure.com"
+   ```
+
+2. Seed an operator credential (prefer a **scoped** `opc_…` token from
+   `POST /api/admin/operators`, not the root `CONTROL_PLANE_ADMIN_TOKEN`, when possible):
+
+   ```sh
+   wrangler secret put CONTROL_PLANE_ADMIN_TOKEN -c wrangler.mcp.toml
+   ```
+
+3. Redeploy. `/health` should show `targets.control_plane: true`.
+
+Self-host / local-only operators **omit** both bindings. Studio tools keep working; `cp_*` tools
+fail closed with a clear configuration error.
+
+**Owner provision** (`POST /api/tenant/provision`) still requires a human (or session-capable
+client) on the front door: magic link / OAuth, AUP acceptance, and RunPod key custody. Admin MCP
+tools operate **after** a tenant row exists. See [PARITY.md](PARITY.md).
 
 ## Check that it works
 
@@ -213,17 +245,19 @@ are the only legal `voice_id` values for `update_cast`.
 **`storyboard_models`** -- `GET /api/storyboard/models`. No arguments. The planning model catalog:
 the model ids accepted by `plan_storyboard`, `refine_storyboard`, and `chat`.
 
-**`list_models`** -- `GET /api/models`. Sibling model catalog.
+**`list_models`** -- `GET /api/models`. Sibling planning/chat model catalog to `storyboard_models`.
 
-**`whoami`** -- `GET /api/whoami`.
+**`whoami`** -- `GET /api/whoami`. Studio identity (token mode returns a fixed operator identity; no
+email leak).
 
-**`get_prefs`** -- `GET /api/prefs`.
+**`get_prefs`** -- `GET /api/prefs`. Operator prefs the panel stores (planner defaults, UI knobs).
 
-**`storage_usage`** -- `GET /api/storage/usage`.
+**`storage_usage`** -- `GET /api/storage/usage`. Ledger: `used_bytes`, `objects`, `quota_bytes`, `over`.
 
-**`list_installed_modules`** -- `GET /api/modules/installed`.
+**`list_installed_modules`** -- `GET /api/modules/installed`. Dynamic module install registry rows.
 
-**`get_module_config`** -- `GET /api/modules/:name/config`.
+**`get_module_config`** -- `GET /api/modules/:name/config`. Install-scope config with defaults filled.
+- `name` (required).
 
 **`list_cast`** -- `GET /api/cast`. No arguments. Every cast member: id, name, bible, portrait,
 LoRA status, voice.
@@ -317,9 +351,15 @@ trained **once** and reused across every project.
 - `id` (required): the cast member's public id.
 - `renderOverrides`: optional training overrides.
 
-**`train_cast_wan_lora`** -- `POST /api/cast/:id/train-wan-lora` (Wan train; spends GPU).
+**`train_cast_wan_lora`** -- `POST /api/cast/:id/train-wan-lora`. **Spends GPU** (Wan cast LoRA).
+Needs `RUNPOD_WAN_TRAIN_ENDPOINT_ID` on the host. Sibling of `train_cast_lora` (SDXL).
+- `id` (required); optional `renderOverrides`.
 
-**`export_cast`** / **`import_cast`** -- `.vvcast` tar export/import.
+**`export_cast`** -- `GET /api/cast/export/:id`. `.vvcast` tar export (binary summarized in MCP).
+- `id` (required).
+
+**`import_cast`** -- `POST /api/cast/import`. Import `.vvcast` tar bytes.
+- `data_base64`, `mime` (e.g. `application/x-tar`) required.
 
 **`cast_lora_status`** -- `GET /api/cast/:id/lora-status`. Poll after training.
 - `id` (required): the cast member's public id.
@@ -432,7 +472,28 @@ from the schema. Validate a bed via the render path, not preflight.
 A text model returns `{ output }`. An image model returns `{ output_artifact: { key, mime } }`;
 feed that `key` to `set_cast_portrait`.
 
-Additional planning/helpers: **`enhance_storyboard`**, **`storyboard_yaml`**, **`storyboard_markers`**, **`audio_analyze`**, **`render_plan`**, **`score_bed`**, **`poll_job`**.
+Additional planning / media helpers (inference or free CPU unless noted):
+
+**`enhance_storyboard`** -- `POST /api/storyboard/enhance`. LLM enhance pass on a storyboard.
+- `storyboard` (required).
+
+**`storyboard_yaml`** -- `POST /api/storyboard/yaml`. Convert or validate YAML forms.
+- `yaml` and/or `storyboard` per contract.
+
+**`storyboard_markers`** -- `POST /api/storyboard/markers`. Derive markers from storyboard / analysis.
+
+**`audio_analyze`** -- `POST /api/audio/analyze`. Analyze a staged audio key (from `upload_audio`).
+- `key` (required).
+
+**`render_plan`** -- `POST /api/storyboard/render-plan`. Build a plan without starting a spend render.
+- `storyboard` (required).
+
+**`score_bed`** -- `POST /api/storyboard/score-bed`. Start music/score generation; poll with
+**`poll_job`**.
+- Optional `storyboard`, `prompt`.
+
+**`poll_job`** -- `GET /api/job/:id`. Generic job poll (score-bed, enhance, …).
+- `id` (required).
 
 ### Render (SPENDS MONEY)
 
@@ -495,9 +556,15 @@ cast member "has a voice in the UI" but the film speaks with the default, you fo
 
 Returns `{ film_id, phase }`. Nothing renders any further unless you poll.
 
-**`submit_clips`** / **`poll_clips`** -- clips-only spend path.
+**`submit_clips`** -- `POST /api/render/clips`. Clips-only spend path (prefer `submit_film` for full
+films).
+- `bundle_key`, `scenes` (required).
 
-**`render_frames`** -- still extraction.
+**`poll_clips`** -- `GET /api/render/clips/:id`. Poll clips job.
+- `id` (required).
+
+**`render_frames`** -- `POST /api/render/frames`. Extract stills from a video artifact.
+- `key` (required); optional `times`.
 
 **`poll_film`** -- `GET /api/render/film/:id`. Advance and poll a film job **one tick**. The
 pipeline moves when you poll, so poll steadily (every 10 to 30 seconds is plenty) until it settles.
@@ -566,81 +633,145 @@ this tool returns a `404` as data, which is the honest answer rather than a brok
 
 ### Studio settings and modules (write)
 
-**`set_prefs`** -- `PATCH /api/prefs`.
+**`set_prefs`** -- `PATCH /api/prefs`. Merge operator prefs the panel would store.
+- Body: either a `prefs` object argument or top-level fields forwarded as JSON.
 
-**`storage_reconcile`** -- `POST /api/storage/reconcile`.
+**`storage_reconcile`** -- `POST /api/storage/reconcile`. Rebuild the storage ledger from object
+store inventory (operator maintenance; may take a while on large buckets).
 
-**`install_module`** / **`uninstall_module`** / **`set_module_enabled`** -- install registry.
+**`install_module`** -- `POST /api/modules/install`.
+- `script_name` (required): Worker script name in the modules dispatch namespace.
+- Needs `MODULE_DISPATCH` on the host; otherwise the studio answers 400/503.
 
-**`patch_module_config`** -- install-scope config patch.
+**`uninstall_module`** -- `DELETE /api/modules/install/:name`.
+- `name` (required): module name.
+
+**`set_module_enabled`** -- `PATCH /api/modules/install/:name`.
+- `name` (required), `enabled` (required boolean).
+
+**`patch_module_config`** -- `PATCH /api/modules/:name/config`.
+- `name` (required), `config` (required object of install-scope fields).
+- Render-scope keys are dropped by the studio (install subschema only).
+
+Pair with reads: `list_installed_modules`, `get_module_config`, `storage_usage`.
 
 ### Demo mode
 
-**`demo_menu`**, **`demo_chat`**, **`demo_render`**, **`poll_demo_render`** -- curated demo path when the host enables it.
+Only when the host enables the curated demo path (no open GPU spend).
+
+**`demo_menu`** -- `GET /api/demo/menu`. Recipe list.
+
+**`demo_chat`** -- `POST /api/demo/chat`.
+- `user_input` (required), `model` optional.
+
+**`demo_render`** -- `POST /api/demo/render`.
+- `id` (required): recipe id from the menu.
+
+**`poll_demo_render`** -- `GET /api/demo/render/:id`.
+- `id` (required): job id from `demo_render`.
 
 ### Control plane (platform)
 
-Requires `CONTROL_PLANE_URL` + `CONTROL_PLANE_ADMIN_TOKEN`. See [PARITY.md](PARITY.md) for bootstrap vs owner provision.
+Requires `CONTROL_PLANE_URL` + `CONTROL_PLANE_ADMIN_TOKEN`. See [PARITY.md](PARITY.md) for bootstrap
+vs owner provision. Call **`cp_whoami`** first to see scopes.
 
-**`cp_whoami`** -- operator identity and scopes.
+**`cp_whoami`** -- `GET /api/admin/whoami`. Operator identity + granted scopes.
 
-**`cp_platform_config`** -- public front-door config projection.
+**`cp_platform_config`** -- `GET /api/platform/config`. Public front-door projection (auth methods).
 
-**`cp_platform_version`** -- plane + pinned studio release.
+**`cp_platform_version`** -- `GET /api/platform/version`. Plane version + pinned studio release.
 
-**`cp_get_settings`** / **`cp_set_settings`** -- platform settings (signups gate).
+**`cp_get_settings`** -- `GET /api/admin/settings`. Platform switches (e.g. signups gate).
 
-**`cp_list_audit`** -- operator audit trail.
+**`cp_set_settings`** -- `POST /api/admin/settings` (`platform:settings`).
+- e.g. `signups_enabled` boolean. Closing signups does not strand mid-onboarding accounts.
 
-**`cp_hosted_storage_usage`** -- aggregate hosted R2 usage (`GET /api/admin/r2-usage`).
+**`cp_list_audit`** -- `GET /api/admin/audit` (`tenants:read`).
+- Optional `limit`, `cursor`.
 
-**`cp_reconcile_runpod`** -- RunPod inventory reconcile.
+**`cp_hosted_storage_usage`** -- `GET /api/admin/r2-usage`. Aggregate hosted R2 (not per-tenant content).
 
-**`cp_llm_meter_run`** / **`cp_meter_settle`** / **`cp_llm_spend`** -- metering pipeline.
+**`cp_reconcile_runpod`** -- `POST /api/admin/reconcile/runpod`. Operator-supplied RunPod snapshot.
 
-**`cp_kek_status`** / **`cp_kek_reencrypt`** -- KEK rotation.
+**`cp_llm_meter_run`** -- `POST /api/admin/llm-meter/run` (`meter:operate`). Force ingest tick.
 
-**`cp_list_operators`** / **`cp_create_operator`** / **`cp_revoke_operator`** -- operator credentials (root).
+**`cp_meter_settle`** -- `POST /api/admin/meter-settle` (`meter:operate`). Settle measured overage
+(not `credits:write` mint-from-nothing).
+
+**`cp_llm_spend`** -- `GET /api/admin/llm-spend`. Optional `tenant_id` filter.
+
+**`cp_kek_status`** / **`cp_kek_reencrypt`** -- KEK status and re-encrypt sweep (`keys:rotate`).
+
+**`cp_list_operators`** -- `GET /api/admin/operators` (**root**).
+
+**`cp_create_operator`** -- `POST /api/admin/operators` (**root**).
+- `name`, `scopes` (required); `expires_at` optional. Plaintext token returned **once**.
+
+**`cp_revoke_operator`** -- `POST /api/admin/operators/:id/revoke` (**root**).
+- `id` (required): `opc_…`.
 
 ### Control plane (tenants)
 
-**`cp_list_tenants`** -- hosted tenant census.
+All take `id` = `ten_…` unless noted. Scope names in parentheses.
 
-**`cp_tenant_credits`** / **`cp_tenant_credits_manual`** -- prepaid credits.
+**`cp_list_tenants`** -- `GET /api/admin/tenants` (`tenants:read`). Census (slug, status, suspended).
 
-**`cp_tenant_module_readiness`** -- module worker readiness after bootstrap.
+**`cp_tenant_credits`** -- `GET …/credits` (`tenants:read`).
 
-**`cp_tenant_suspend`** / **`cp_tenant_resume`** -- kill switch.
+**`cp_tenant_credits_manual`** -- `POST …/credits/manual` (`credits:write`).
+- `reason` required; amount fields per plane body schema. Mints or debits money.
 
-**`cp_tenant_teardown`** -- irreversible destroy (`tenants:destroy`).
+**`cp_tenant_module_readiness`** -- `GET …/module-readiness` (`tenants:read`). After upgrade/bootstrap.
 
-**`cp_tenant_upgrade_studio`** / **`cp_tenant_upgrade_modules`** -- push published pins.
+**`cp_tenant_suspend`** / **`cp_tenant_resume`** -- kill switch (`tenants:write`).
+- `reason` required (audit).
 
-**`cp_tenant_refresh_bindings`** -- re-apply studio bindings.
+**`cp_tenant_teardown`** -- irreversible destroy (`tenants:destroy`). Refused under preservation hold.
 
-**`cp_tenant_invoke_key_handoff`** -- mint owner invoke-key handoff.
+**`cp_tenant_upgrade_studio`** -- push pinned published studio release (`studio:operate`).
+- Optional `to_release`.
 
-**`cp_tenant_reprovision_runpod`** -- rebuild RunPod endpoints.
+**`cp_tenant_upgrade_modules`** -- upgrade module workers (`studio:operate`).
+- Optional `from_release`, `to_release`.
 
-**`cp_tenant_smoke_render`** / **`cp_poll_smoke_render`** -- spend smoke film.
+**`cp_tenant_refresh_bindings`** -- re-apply studio bindings/secrets (`studio:operate`).
 
-**`cp_tenant_abuse_report_url`** -- converge abuse link.
+**`cp_tenant_invoke_key_handoff`** -- mint owner RunPod invoke-key handoff (`studio:operate`).
 
-**`cp_tenant_storage_quota`** -- storage quota.
+**`cp_tenant_reprovision_runpod`** -- rebuild endpoints (`studio:operate`).
+- Transient `runpod_api_key` (Key A; plane never stores it).
 
-**`cp_tenant_video_finish_binding`** / **`cp_tenant_video_finish_tier_state`** -- finish tier.
+**`cp_tenant_smoke_render`** -- start smoke film (**spends GPU**, `studio:operate`).
 
-**`cp_list_preservation_holds`** / **`cp_open_preservation_hold`** / **`cp_release_preservation_hold`** -- statutory holds.
+**`cp_poll_smoke_render`** -- poll `smk_…` job (`tenants:read`).
+- `id`, `smoke_id` required.
+
+**`cp_tenant_abuse_report_url`** -- converge `host.abuse_report_url` on the tenant studio.
+
+**`cp_tenant_storage_quota`** -- set quota (`tenants:write`).
+
+**`cp_tenant_video_finish_binding`** / **`cp_tenant_video_finish_tier_state`** -- finish tier ops.
+
+**`cp_list_preservation_holds`** -- list holds (`tenants:read`).
+
+**`cp_open_preservation_hold`** -- open statutory hold (`tenants:write`); blocks teardown.
+
+**`cp_release_preservation_hold`** -- human release only (`tenants:write`).
+- `hold_id`, `reason` required. Clocks never auto-release.
 
 ### Escape hatch
 
-**`studio_request`** -- any studio CONTRACT path (JSON).
+**`studio_request`** -- any studio CONTRACT path (JSON body only; binary summarized).
+- `method` (required), `path` (required, starts with `/`), optional `query`, `body`.
+- Use for uncurated doors (e.g. `/api/storyboard/render` until cf#334). Prefer curated tools.
 
-**`control_plane_request`** -- any control-plane path (admin bearer). Owner provision stays session-based; see PARITY.md.
+**`control_plane_request`** -- any control-plane path with the admin bearer.
+- Same args as `studio_request`. Prefer curated `cp_*` tools.
+- Owner provision remains session-based; admin bearer will not satisfy it.
 
 ## A render, end to end
 
-The full happy path, with the arguments that matter. Steps 1 through 4 are free; step 5 spends.
+The full happy path. Steps 1 through 4 are free or inference-only; step 5 spends GPU.
 
 1. **`studio_modules`** -- note a name under `hooks["motion.backend"]` and the
    `render.quality_tiers`.
@@ -650,15 +781,33 @@ The full happy path, with the arguments that matter. Steps 1 through 4 are free;
    `quality` when you know the door so the duration-grid clamp can fire) -- keep fixing and
    re-running until `ok: true`.
 4. **`bundle_storyboard`** with `{ storyboard, characterRefs }` -- keep the returned `bundleKey`.
-5. **`submit_film`** with `{ bundle_key, scenes, motion_backend, keyframe_config: { quality_tier } }`
-   -- keep the returned `film_id`. **This is the spend line.**
-6. **`submit_clips`** / **`poll_clips`** -- clips-only spend path.
+5. **`submit_film`** with
+   `{ bundle_key, scenes, motion_backend, keyframe_config: { quality_tier } }` -- keep `film_id`.
+   **This is the spend line.**
+6. **`poll_film`** with `{ id: film_id }` every 10 to 30 seconds. Watch `phase`; stop on `done`
+   (grab `download_url`, valid 6h) or `failed` (fix, resubmit).
 
-**`render_frames`** -- still extraction.
+Related (not substitutes for the film path):
 
-**`poll_film`** with `{ id: film_id }` every 10 to 30 seconds. Watch `phase` walk the pipeline;
-   stop on `done` (grab `download_url`, valid 6h) or `failed` (read the per-shot error, fix,
-   resubmit).
+- **`submit_clips`** / **`poll_clips`** -- clips-only spend pipeline.
+- **`render_frames`** -- extract stills from a finished video artifact.
+- Alternate panel doors (`/api/storyboard/render`, scatter, animate, finalize, regen-shot) stay
+  **uncurated** until sound reconciliation (cf#334); use `studio_request` if you must.
+
+## Hosted tenant ops, end to end
+
+After a human has provisioned (front door + AUP + keys):
+
+1. **`cp_whoami`** -- confirm scopes (`studio:operate`, `tenants:read`, …).
+2. **`cp_list_tenants`** -- resolve `ten_…` for the slug.
+3. **`cp_tenant_upgrade_studio`** (and **`cp_tenant_upgrade_modules`** if modules lag).
+4. **`cp_tenant_refresh_bindings`** if bindings drifted.
+5. **`cp_tenant_module_readiness`** -- doors green.
+6. **`cp_tenant_smoke_render`** then **`cp_poll_smoke_render`** until done (**spends GPU**).
+7. Optional: **`cp_tenant_abuse_report_url`**, credits, storage quota.
+
+Point a studio-configured MCP at `https://<slug>.studio.vivijure.com` with a **tenant** API token
+for creative tools (separate from the admin bearer).
 
 ## Security boundary
 
@@ -674,6 +823,9 @@ The full happy path, with the arguments that matter. Steps 1 through 4 are free;
   is not the only thing between the public internet and your studio credential.
 - `studio_request` is bounded in FORMAT (JSON in/out, binary summarized) but not in REACH. The gate
   is the control, not per-tool allowlisting: anyone holding `MCP_TOKEN` holds the studio.
+- When control plane is armed, `MCP_TOKEN` also reaches **every admin capability** of the seeded
+  operator token (upgrade, suspend, teardown, credits if scoped). Prefer scoped `opc_…`
+  credentials; never put root admin in a shared agent profile.
 
 ## Troubleshooting
 
@@ -681,21 +833,29 @@ The full happy path, with the arguments that matter. Steps 1 through 4 are free;
 |---------|---------|-----|
 | `401 {"error":"unauthorized"}` on `/mcp` | Missing/wrong `MCP_TOKEN` header, or the `MCP_TOKEN` secret is unset on the Worker (it fails closed). | Re-check the client's `Authorization: Bearer` value; re-seed with `wrangler secret put MCP_TOKEN -c wrangler.mcp.toml`. |
 | Tool result: `MCP is not configured: STUDIO_API_TOKEN is unset.` | The gate passed but the Worker has no studio bearer to forward with. | Seed `STUDIO_API_TOKEN` (step 3 of [Deploy](#deploy-the-mcp-worker)). |
-| Tool result: `STUDIO_URL is not configured` | The rendered `wrangler.mcp.toml` deployed without the var. | Re-render from the example with `MCP_STUDIO_URL` set and redeploy. |
-| Tool result line ends `-> 401` or `-> 403` | The MCP reached the studio, but the studio rejected the bearer (revoked/rotated token, or the studio is not in token mode). | Mint a fresh consumer token on the studio (`scripts/studio-consumer-token.sh mint studio-mcp`), re-seed `STUDIO_API_TOKEN`; confirm the studio's `AUTH_MODE`. |
+| Tool result: `MCP control plane is not configured: CONTROL_PLANE_ADMIN_TOKEN is unset.` | `cp_*` tool without plane secret. | Seed admin/operator token or omit control-plane tools. |
+| Tool result: `STUDIO_URL` / `CONTROL_PLANE_URL` is not configured | Var missing from rendered wrangler. | Fix `[vars]` and redeploy. |
+| Tool result line ends `-> 401` or `-> 403` | Upstream rejected the forwarded bearer (wrong scope, revoked token, or studio not in token mode). | Mint/re-seed studio consumer token; for plane, check `cp_whoami` scopes. |
 | Tool result line ends `-> 422` | The studio validated your body and rejected it (planner output, bad storyboard). | The errors are in the reply body; fix and retry. It is data, not an outage. |
 | `Studio request failed (transport): ...` | The Worker could not reach `STUDIO_URL` at all (DNS, TLS, studio down). | Check the studio's own health, then the `STUDIO_URL` value. |
+| `Control plane request failed (transport): ...` | Same for the plane host. | Check `CONTROL_PLANE_URL` and plane health. |
 | `poll_film` never advances | The pipeline only moves when polled. | Keep polling on a steady cadence; a phase can legitimately take minutes of wall clock (GPU cold starts). |
 | `download_url` gives an error after a while | The presigned link has a 6h TTL. | Call `poll_film` again on the same `film_id`; a `done` film re-issues a fresh URL. |
+| Owner provision fails with admin token | Expected: provision is session + AUP, not admin. | Use the front door; then admin MCP for lifecycle. |
+
+## Parity
+
+Honest matrix of panel / console vs tools: **[PARITY.md](PARITY.md)**.
 
 ## Files
 
 Package paths (import as `@skyphusion-labs/vivijure-mcp`, etc.):
 
 - `src/mcp.ts` -- transport, bearer gate, JSON-RPC dispatch (default export for Worker `main`).
-- `src/mcp-tools.ts` -- tool catalog + studio-call dispatch + `studio_request`.
-- `src/mcp-env.ts` -- `McpEnv` binding surface.
+- `src/mcp-tools.ts` -- tool catalog + dual-target dispatch + escape hatches.
+- `src/mcp-env.ts` -- `McpEnv` binding surface (`STUDIO_*`, `CONTROL_PLANE_*`, `MCP_TOKEN`).
 
 Host deploy wiring: `vivijure-cf/wrangler.mcp.toml.example` (or `vivijure-local` equivalent).
-- `wrangler.mcp.toml.example` -- the committed config template (real `wrangler.mcp.toml` gitignored).
-- `tests/mcp.test.ts` -- transport + dispatch tests.
+Real `wrangler.mcp.toml` is gitignored.
+
+Tests: `tests/mcp.test.ts`, `tests/control-plane-130.test.ts`, docs catalog/placement guards.

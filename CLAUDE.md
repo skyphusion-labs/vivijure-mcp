@@ -4,16 +4,20 @@ Guidance for Claude Code (and the crew) working in this repo.
 
 ## What this is
 
-**`@skyphusion-labs/vivijure-mcp`: the Vivijure Studio MCP door.** Stateless Model Context Protocol
-Worker that proxies curated tools to a studio HTTP API (`STUDIO_URL`). Hosts
-(`vivijure-cf`, `vivijure-local`) supply only wrangler/deploy config; implementation lives here.
+**`@skyphusion-labs/vivijure-mcp`: the Vivijure Studio + control-plane MCP door.** Stateless Model
+Context Protocol Worker that proxies curated tools to a studio HTTP API (`STUDIO_URL`) and
+optionally to the hosted control plane (`CONTROL_PLANE_URL`). Hosts (`vivijure-cf`,
+`vivijure-local`) supply only wrangler/deploy config; implementation lives here.
 
-- Tool catalog: `export const TOOLS` in `src/mcp-tools.ts` (**42** tools at last count; re-count from
+- Tool catalog: `export const TOOLS` in `src/mcp-tools.ts` (**109** tools at 1.3.0; re-count from
   code if the number drifts -- do not treat this file as the ledger).
+- Dual target: studio tools use `STUDIO_API_TOKEN`; `cp_*` tools use `CONTROL_PLANE_ADMIN_TOKEN`.
 - Prod door example: `studio-mcp.vivijure.com` (operator-configured; not hard-wired in the package).
 - Opt-in: a default self-host does **not** deploy MCP.
+- Parity honesty: `docs/PARITY.md` (owner provision stays session-based; some render doors
+  uncurated per cf#334).
 
-Version: see root `package.json` / latest `vivijure-mcp-v*` tag / `CHANGELOG.md`.
+Version: see root `package.json` / latest `vivijure-mcp-v*` tag / `CHANGELOG.md` (**1.3.0** train).
 
 ## Relation to the constellation
 
@@ -23,7 +27,7 @@ Version: see root `package.json` / latest `vivijure-mcp-v*` tag / `CHANGELOG.md`
 | `vivijure-cf` / `vivijure-local` | Studio hosts; MCP points at their HTTPS API |
 | `vivijure-core` | Shared orchestration; hosts implement CONTRACT |
 | Studio CONTRACT | Host `docs/CONTRACT.md` (wire shapes tools map to) |
-| `vivijure-control-plane` | Hosted multi-tenant plane (not required for MCP) |
+| `vivijure-control-plane` | Hosted multi-tenant plane; optional MCP target for admin ops |
 
 Module / hook types for studio work come from **`@skyphusion-labs/vivijure-core`**, not host
 `src/modules/types.ts`.

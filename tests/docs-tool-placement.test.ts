@@ -52,15 +52,19 @@ function sections(): { heading: string; tools: string[] }[] {
 
 // Snapshot. To change it, change the document first and then bring this into line DELIBERATELY.
 const EXPECTED: [string, number][] = [
-  ["Registry and reads (free, safe to call any time)", 9],
-  ["Cast", 13],
+  ["Registry and reads (free, safe to call any time)", 15],
+  ["Cast", 16],
   ["Projects and the render library (write)", 6],
   ["Finishing a completed render", 2],
-  ["Planning (LLM calls; costs inference, not GPU render time)", 4],
-  ["Render (SPENDS MONEY)", 3],
+  ["Planning (LLM calls; costs inference, not GPU render time)", 11],
+  ["Render (SPENDS MONEY)", 6],
   ["Bytes in (bring your own image or audio)", 2],
   ["Artifacts (see what you made)", 2],
-  ["Escape hatch", 1],
+  ["Studio settings and modules (write)", 6],
+  ["Demo mode", 4],
+  ["Control plane (platform)", 16],
+  ["Control plane (tenants)", 21],
+  ["Escape hatch", 2],
 ];
 
 describe("docs/mcp.md tool placement", () => {
@@ -101,6 +105,9 @@ describe("docs/mcp.md tool placement", () => {
     const cast = s.find((x) => x.heading === "Cast");
     expect(cast?.tools, "create_cast is not under Cast").toContain("create_cast");
     const hatch = s.find((x) => x.heading === "Escape hatch");
-    expect(hatch?.tools, "studio_request leaked out of Escape hatch").toEqual(["studio_request"]);
+    expect(hatch?.tools, "escape hatch tools drifted").toEqual([
+      "studio_request",
+      "control_plane_request",
+    ]);
   });
 });

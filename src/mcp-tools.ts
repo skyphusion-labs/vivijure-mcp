@@ -1006,8 +1006,16 @@ export const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 // Build the absolute studio URL for a call, appending any defined query params. STUDIO_URL is
 // normalized (trailing slash trimmed); a missing STUDIO_URL throws (fail closed at call time).
+
+/** Strip trailing ASCII slashes without a regex (CodeQL js/polynomial-redos). */
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* / */) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
 export function studioUrl(env: McpEnv, call: StudioCall): string {
-  const base = (env.STUDIO_URL ?? "").replace(/\/+$/, "");
+  const base = trimTrailingSlashes(env.STUDIO_URL ?? "");
   if (!base) throw new Error("STUDIO_URL is not configured");
   const url = new URL(base + call.path);
   if (call.query) {

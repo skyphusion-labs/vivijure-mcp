@@ -6,6 +6,18 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **feat(mcp): `MCP_TOKEN_EXTRA`, an additive second gate secret.** The gate now accepts `MCP_TOKEN`
+  OR any entry in `MCP_TOKEN_EXTRA` (comma- and/or newline-separated), so a new client can be issued
+  its own credential without rewriting the operator's `MCP_TOKEN`. Worker secrets are write-only, so
+  widening access by rewriting `MCP_TOKEN` means re-supplying the operator's own token from memory
+  and one typo silently 401s the operator. Blank entries are dropped: `"tok,"` splits to
+  `["tok", ""]`, and an empty credential would make the expected header the bare string `"Bearer "`.
+  Fail-closed is unchanged and structural (no gate credential anywhere => every request refused);
+  every candidate is compared with no early return, so the runtime does not reveal which token
+  matched, and the Worker never records or returns which one opened the gate. `MCP_TOKEN` itself is
+  never split and never trimmed, so a token containing a separator keeps working exactly as before.
+  BEHAVIOUR CHANGE, one case only: a whitespace-only `MCP_TOKEN` used to admit a client sending the
+  matching all-space bearer and now yields no credential at all.
 - **docs:** full README front door; complete 1.3 tool reference (settings, demo, control plane);
   control-plane deploy section, hosted ops walkthrough, expanded troubleshooting; PARITY cross-link.
 

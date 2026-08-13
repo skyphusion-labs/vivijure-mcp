@@ -38,7 +38,8 @@ flowchart TB
   CP --> Tenants["Per-tenant studio Workers"]
 ```
 
-- Agent never sees the studio or control-plane secrets (only `MCP_TOKEN`).
+- Agent never sees the studio or control-plane secrets (only its gate token: `MCP_TOKEN`, or one of
+  the additive tokens in `MCP_TOKEN_EXTRA`).
 - Long jobs are agent-driven poll loops (`submit_film` → `poll_film`, smoke render, etc.).
 - Opt-in: default self-host does **not** deploy MCP.
 

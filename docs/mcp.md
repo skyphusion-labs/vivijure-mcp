@@ -77,13 +77,14 @@ You need:
 
 ## Deploy the MCP Worker
 
-The Worker needs exactly three values:
+The Worker reads these values:
 
 | Value | Kind | What it is |
 |-------|------|------------|
 | `STUDIO_URL` | var (in `wrangler.mcp.toml`) | The base URL of your studio, e.g. `https://studio.example.com`. No trailing slash needed (it is normalized). |
 | `STUDIO_API_TOKEN` | secret | The studio bearer the MCP presents on every forwarded call (the named consumer token from above). |
-| `MCP_TOKEN` | secret | The gate. Every agent request must carry `Authorization: Bearer <MCP_TOKEN>`. |
+| `MCP_TOKEN` | secret | The gate. Every agent request must carry `Authorization: Bearer <MCP_TOKEN>`. Treated as ONE opaque value: never split, never trimmed. |
+| `MCP_TOKEN_EXTRA` | secret (optional) | ADDITIVE further gate tokens, comma- and/or newline-separated. Any entry opens the gate exactly like `MCP_TOKEN`. Issue a second client its own credential here so `MCP_TOKEN` is never rewritten. Blank entries (a trailing comma, a stray newline) are dropped. |
 | `CONTROL_PLANE_URL` | var (optional) | Hosted control plane base, e.g. `https://studio.vivijure.com`. Enables `cp_*` tools. |
 | `CONTROL_PLANE_ADMIN_TOKEN` | secret (optional) | Admin/operator bearer for `/api/admin/*`. Distinct from the studio token. |
 
@@ -106,7 +107,21 @@ wrangler secret put STUDIO_API_TOKEN -c wrangler.mcp.toml
 #    your client config holds it).
 umask 077 && openssl rand -hex 32 > mcp-token.txt
 wrangler secret put MCP_TOKEN -c wrangler.mcp.toml < mcp-token.txt
+
+# 5. OPTIONAL: issue a SECOND client its own gate token without touching MCP_TOKEN.
+#    Worker secrets are write-only, so widening access by rewriting MCP_TOKEN means re-supplying
+#    your own token from memory and one typo silently 401s you. Put additional tokens here instead;
+#    any entry opens the gate exactly like MCP_TOKEN, and MCP_TOKEN is never rewritten.
+#    Comma- and/or newline-separated. This secret REPLACES its previous value on every put, so
+#    re-supply the full list of extra tokens each time (that list never contains MCP_TOKEN).
+umask 077 && openssl rand -hex 32 > mcp-token-crew.txt
+printf '%s' "$(cat mcp-token-crew.txt)" | wrangler secret put MCP_TOKEN_EXTRA -c wrangler.mcp.toml
 ```
+
+To revoke one extra client, re-put `MCP_TOKEN_EXTRA` without its entry; to revoke all of them, put
+an empty value (the Worker then falls back to `MCP_TOKEN` alone). Revoking `MCP_TOKEN` itself is
+still a `wrangler secret put MCP_TOKEN`. With NO gate token anywhere -- neither secret set, or both
+empty once blank entries are dropped -- the Worker refuses every request; it never opens up.
 
 **The CI path (this repo's tag-gated deploy):** the MCP deploys as the last step of a `v*` tag
 deploy ONLY when both `MCP_HOST` and `MCP_STUDIO_URL` repo **variables** are set; when they are not,
@@ -811,11 +826,14 @@ for creative tools (separate from the admin bearer).
 
 ## Security boundary
 
-- The MCP is machine-to-machine only, gated by `MCP_TOKEN` (fail closed: unset or wrong token is a
-  `401`, and an UNSET `MCP_TOKEN` on the Worker refuses everything rather than opening up). It is a
-  full write path to the studio, **including spend routes** (`submit_film`) and, via
-  `studio_request`, delete routes. Treat `MCP_TOKEN` with exactly the care you give the studio
-  bearer itself.
+- The MCP is machine-to-machine only, gated by `MCP_TOKEN` and any token in `MCP_TOKEN_EXTRA`
+  (fail closed: a wrong token is a `401`, and a Worker with NO gate token at all refuses everything
+  rather than opening up). It is a full write path to the studio, **including spend routes**
+  (`submit_film`) and, via `studio_request`, delete routes. Treat EVERY gate token with exactly the
+  care you give the studio bearer itself: `MCP_TOKEN_EXTRA` is a convenience for issuing and
+  revoking credentials independently, **not** a lower tier of access. There is no per-token scoping
+  and the Worker never records which token was used, so an extra token is a full-privilege
+  credential.
 - Give the MCP its own named consumer token (see [Before you start](#before-you-start)) so a leak
   burns one credential, rotation touches one consumer, and MCP traffic is attributable in the
   observability stream.
@@ -831,7 +849,7 @@ for creative tools (separate from the admin bearer).
 
 | Symptom | Meaning | Fix |
 |---------|---------|-----|
-| `401 {"error":"unauthorized"}` on `/mcp` | Missing/wrong `MCP_TOKEN` header, or the `MCP_TOKEN` secret is unset on the Worker (it fails closed). | Re-check the client's `Authorization: Bearer` value; re-seed with `wrangler secret put MCP_TOKEN -c wrangler.mcp.toml`. |
+| `401 {"error":"unauthorized"}` on `/mcp` | The bearer matches neither `MCP_TOKEN` nor any entry in `MCP_TOKEN_EXTRA`, or the Worker holds no gate token at all (it fails closed). | Re-check the client's `Authorization: Bearer` value; re-seed with `wrangler secret put MCP_TOKEN -c wrangler.mcp.toml`, or `MCP_TOKEN_EXTRA` if the client holds an extra token. A client added to `MCP_TOKEN_EXTRA` only takes effect once the Worker is redeployed or the secret is put on the live Worker. |
 | Tool result: `MCP is not configured: STUDIO_API_TOKEN is unset.` | The gate passed but the Worker has no studio bearer to forward with. | Seed `STUDIO_API_TOKEN` (step 3 of [Deploy](#deploy-the-mcp-worker)). |
 | Tool result: `MCP control plane is not configured: CONTROL_PLANE_ADMIN_TOKEN is unset.` | `cp_*` tool without plane secret. | Seed admin/operator token or omit control-plane tools. |
 | Tool result: `STUDIO_URL` / `CONTROL_PLANE_URL` is not configured | Var missing from rendered wrangler. | Fix `[vars]` and redeploy. |

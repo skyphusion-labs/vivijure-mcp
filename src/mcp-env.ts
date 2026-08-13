@@ -25,8 +25,26 @@ export interface McpEnv {
   CONTROL_PLANE_ADMIN_TOKEN?: string;
 
   // The MCP gate. Every /mcp request must present `Authorization: Bearer <MCP_TOKEN>`. A worker
-  // SECRET. When unset the Worker refuses all requests (fail closed). Machine-to-machine only:
-  // this is a DISTINCT credential from STUDIO_API_TOKEN so an MCP client never learns the studio
-  // bearer, and the two can be rotated independently.
+  // SECRET. Machine-to-machine only: this is a DISTINCT credential from STUDIO_API_TOKEN so an MCP
+  // client never learns the studio bearer, and the two can be rotated independently. Treated as
+  // ONE opaque value -- never split, never trimmed -- so a token containing a comma, a newline or
+  // surrounding whitespace keeps authenticating exactly as it does today. When neither this nor
+  // MCP_TOKEN_EXTRA yields a credential the Worker refuses every request (fail closed).
   MCP_TOKEN?: string;
+
+  // ADDITIVE further gate credentials, comma- and/or newline-separated (fleet-chezmoi #1070; the
+  // same shape crew-bus uses for the same reason). A worker SECRET
+  // (wrangler secret put MCP_TOKEN_EXTRA -c wrangler.mcp.toml).
+  //
+  // Worker secrets are write-only, so issuing a credential to a second client by rewriting
+  // MCP_TOKEN means re-supplying the operator's own token from memory, and one typo silently 401s
+  // the operator. Entries land here instead and MCP_TOKEN is never touched, so an existing client
+  // cannot break whatever this contains.
+  //
+  // Each entry is trimmed and BLANK ENTRIES ARE DROPPED: "tok," splits to ["tok", ""], and an
+  // empty credential would make the expected header the bare string "Bearer ", which any client
+  // can send -- so a trailing comma or a stray newline would otherwise open the door to everyone.
+  // Read this ONLY via gateCredentials() in mcp.ts, never directly: a call site reading MCP_TOKEN
+  // alone sees a PARTIAL credential set and 401s every client holding one of these.
+  MCP_TOKEN_EXTRA?: string;
 }

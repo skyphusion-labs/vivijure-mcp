@@ -6,10 +6,13 @@
 // bindings and reaches the studio purely over HTTP with the operator's studio bearer, so it can run
 // against any studio by pointing STUDIO_URL at it.
 //
-// Two independent credentials keep the surfaces clean:
-//   - MCP_TOKEN         gates THIS server (every /mcp request needs Authorization: Bearer <MCP_TOKEN>).
+// The credentials that keep the surfaces clean:
+//   - MCP_TOKEN         gates THIS server (every /mcp request needs Authorization: Bearer <token>).
+//   - MCP_TOKEN_EXTRA   an ADDITIVE list of further accepted gate tokens, so a new client gets its
+//                       own credential without MCP_TOKEN ever being rewritten (fleet-chezmoi #1070).
 //   - STUDIO_API_TOKEN  is the studio bearer this server sends onward; the MCP client never sees it.
-// Both are worker secrets seeded out-of-band; either unset => fail closed.
+// All are worker secrets seeded out-of-band. The gate fails closed when NO gate credential exists
+// at all: neither secret set, or both empty once blank entries are dropped.
 //
 // Long-running renders are agent-driven: submit_film returns a job id, then the agent polls poll_film
 // until done/failed. This server never long-polls or holds job state.
@@ -35,6 +38,58 @@ function timingSafeEqual(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+// Every credential that may open the gate: MCP_TOKEN plus every entry in MCP_TOKEN_EXTRA.
+//
+// MCP_TOKEN_EXTRA is ADDITIVE (fleet-chezmoi #1070; crew-bus solves the same problem the same
+// way). Worker secrets are write-only, so widening access by rewriting MCP_TOKEN means
+// re-supplying the operator's own credential from memory, and one typo silently 401s the
+// operator. A second secret lets a new client be issued its own token while MCP_TOKEN is never
+// touched, so no existing client can break whatever MCP_TOKEN_EXTRA contains.
+//
+// The two secrets are handled DIFFERENTLY, deliberately:
+//   - MCP_TOKEN is ONE opaque value. It is never split and never trimmed, so a token that today
+//     contains a comma, a newline or surrounding whitespace keeps authenticating exactly as it
+//     does now. Splitting it would turn one secret into several shorter accepted ones, which is a
+//     silent weakening rather than a feature.
+//   - MCP_TOKEN_EXTRA is a LIST. Entries separate on comma and/or newline (CR tolerated so a
+//     value pasted out of a file works), and each entry is trimmed.
+//
+// EMPTY ENTRIES ARE DROPPED, and that is the load-bearing line here. "crew-a," splits to
+// ["crew-a", ""]; an empty candidate makes the expected header the bare string "Bearer ", which
+// any client can send verbatim. A trailing comma or a stray newline in a secret would otherwise
+// open the door to everyone. Driven red directly in tests/mcp-token-extra.test.ts.
+//
+// Fail-closed is STRUCTURAL, not a guard: with no candidates the comparison loop below never
+// runs, so there is no expected value for any request to match.
+//
+// EXPORTED FOR TESTS, and not incidentally: a mutation pass showed that no HTTP-level
+// assertion can observe whether the blank-entry filter below exists, because Headers
+// normalisation strips a trailing space from `Authorization: "Bearer "` before this code
+// ever sees it. The credential set is therefore asserted directly. Not re-exported from
+// package.json; it is an internal seam, not public API.
+export function gateCredentials(env: McpEnv): string[] {
+  const out: string[] = [];
+  if (typeof env.MCP_TOKEN === "string" && env.MCP_TOKEN.trim() !== "") out.push(env.MCP_TOKEN);
+  if (typeof env.MCP_TOKEN_EXTRA === "string") {
+    for (const raw of env.MCP_TOKEN_EXTRA.split(/[,\r\n]/)) {
+      const entry = raw.trim();
+      if (entry !== "") out.push(entry);
+    }
+  }
+  return out;
+}
+
+// Compare against EVERY credential and OR-accumulate, with no early return: the runtime does not
+// depend on which token was presented or on how early it matched. Returns a boolean and nothing
+// else -- which credential opened the gate is never returned, logged or otherwise surfaced.
+export function gateOpens(auth: string, env: McpEnv): boolean {
+  let opened = 0;
+  for (const token of gateCredentials(env)) {
+    opened |= timingSafeEqual(auth, `Bearer ${token}`) ? 1 : 0;
+  }
+  return opened !== 0;
 }
 
 interface RpcMessage {
@@ -119,10 +174,10 @@ export default {
     }
     if (url.pathname !== "/mcp") return json({ error: "not_found" }, 404);
 
-    // Bearer gate, fail closed. Machine-to-machine only.
+    // Bearer gate, fail closed. Machine-to-machine only. Any credential in MCP_TOKEN or
+    // MCP_TOKEN_EXTRA opens it; see gateCredentials() for why blank entries are dropped.
     const auth = request.headers.get("Authorization") ?? "";
-    const expected = env.MCP_TOKEN ? `Bearer ${env.MCP_TOKEN}` : "";
-    if (!env.MCP_TOKEN || !timingSafeEqual(auth, expected)) {
+    if (!gateOpens(auth, env)) {
       return json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
     }
 

@@ -1,6 +1,6 @@
 {
   "name": "@skyphusion-labs/vivijure-mcp",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Vivijure Studio MCP: drive the film studio API (vivijure-cf / vivijure-local) and optionally the hosted control plane admin API from an agent.",
   "license": "AGPL-3.0-only",
   "type": "module",

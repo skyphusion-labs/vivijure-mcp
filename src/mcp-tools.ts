@@ -795,7 +795,7 @@ export const TOOLS: McpTool[] = [
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
-      "qualityTier? }. " +
+      "qualityTier?, shard_count? }. " +
       "Each *_config is { [moduleName]: config }, feeding one hook stage: finish_config -> the per-shot " +
       "finish chain, speech_config -> the speech (dialogue-audio) chain, film_finish_config -> the " +
       "film.finish chain on the assembled film (this is where SUBTITLE mode burn/sidecar/both and the " +
@@ -805,7 +805,9 @@ export const TOOLS: McpTool[] = [
       "hooks['motion.backend'] / hooks['keyframe']); an omitted backend can pick a non-operational " +
       "door (#380). qualityTier (draft/standard/final, also in studio_modules render.quality_tiers) " +
       "labels the render-history row with what was requested; omitted, the row records \"final\" " +
-      "regardless of what actually ran (#382) -- it does not change what renders. VOICES: pass " +
+      "regardless of what actually ran (#382) -- it does not change what renders. shard_count (alias " +
+      "shardCount): omitted, the studio uses min(shots, 20) so a 20-worker pool is used; 1 = one " +
+      "serial job; N is clamped to the shot count. VOICES: pass " +
       "cast_loras so dialogue speaks with each cast member's voice; explicit dialogue_lines win over " +
       "bundle-derived ones, and a line's own voice_id wins over the cast voice. Without cast_loras or " +
       "voice_id, dialogue falls to the studio default voice.",
@@ -846,6 +848,10 @@ export const TOOLS: McpTool[] = [
           "regardless of what actually ran (#382). Does not change the actual render tier, which " +
           "is driven by keyframe_config / motion_config.",
         ),
+        shard_count: NUM(
+          "Parallel film shard count (alias shardCount). Omitted, the studio uses min(shots, 20) " +
+          "so a 20-worker pool is used. 1 = one serial job. N is clamped to the shot count.",
+        ),
       },
       ["bundle_key", "scenes"],
     ),
@@ -860,11 +866,15 @@ export const TOOLS: McpTool[] = [
   {
     name: "poll_film",
     description:
-      "GET /api/render/film/:id. Advance + poll a film job one tick. Returns { phase, clips?, finish?, " +
-      "film_key?, download_url? }. Call repeatedly until phase is 'done' (a presigned download_url is " +
-      "then present, 6h TTL) or 'failed'. Phases: keyframe, clips, dialogue, speech, finish, assemble, " +
-      "master, mux, done, failed.",
-    inputSchema: OBJ({ id: STR("The film-<...> job id from submit_film.") }, ["id"]),
+      "GET /api/render/film/:id. Advance + poll a film job one tick. id may be film-* or scatter-* " +
+      "(same poll path). Returns { phase, clips?, finish?, film_key?, download_url?, film_id? }. Call " +
+      "repeatedly until phase is 'done' (a presigned download_url is then present, 6h TTL) or 'failed'. " +
+      "Serial phases: keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed. " +
+      "A scattered film can report shards, gather, mux, finishing, done, failed.",
+    inputSchema: OBJ(
+      { id: STR("film-* or scatter-* job id from submit_film. Same GET /api/render/film/:id path.") },
+      ["id"],
+    ),
     build: (a) => ({
       method: "GET",
       path: `/api/render/film/${encodeURIComponent(reqStr(a, "id"))}`,

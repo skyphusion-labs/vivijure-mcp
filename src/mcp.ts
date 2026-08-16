@@ -26,7 +26,7 @@ import { TOOLS, TOOLS_BY_NAME, runTool } from "./mcp-tools.js";
 // exists got the same answer before and after a release that added one. It is not derived from
 // package.json because that would need a JSON import in the Worker bundle; the drift is prevented by
 // tests/server-info-version.test.ts instead, which fails if these two ever disagree.
-const SERVER_INFO = { name: "vivijure-studio", version: "1.3.0" };
+const SERVER_INFO = { name: "vivijure-studio", version: "1.4.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
 function timingSafeEqual(a: string, b: string): boolean {

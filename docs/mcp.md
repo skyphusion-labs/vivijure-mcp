@@ -563,6 +563,9 @@ There is no undo; treat every call like clicking a "charge my account" button.
   the row records `"final"` regardless of what actually ran (#382). Does not change the actual
   render, which is still driven by `keyframe_config` / `motion_config` -- this only makes the
   history label honest.
+- `shard_count`: parallel shard count (alias `shardCount`). Omitted, the studio uses
+  `min(shots, 20)` so a 20-worker pool is used. `1` is a serial film (one job). `N` is clamped
+  to the shot count. Do not send null; omit the field to let the studio pick.
 
 **Voices, in one rule:** explicit `dialogue_lines` win over bundle-derived dialogue; a line's own
 `voice_id` wins over the cast voice; a voiceless line uses the cast voice of its shot's speaking
@@ -583,10 +586,12 @@ films).
 
 **`poll_film`** -- `GET /api/render/film/:id`. Advance and poll a film job **one tick**. The
 pipeline moves when you poll, so poll steadily (every 10 to 30 seconds is plenty) until it settles.
-- `id` (required): the `film-<...>` job id from `submit_film`.
+- `id` (required): the `film-<...>` or `scatter-<...>` job id from `submit_film`. Same poll path
+  for both; a scatter job also returns `film_id`.
 
-Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Phases, in order:
+Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Serial phases, in order:
 `keyframe`, `clips`, `dialogue`, `speech`, `finish`, `assemble`, `master`, `mux`, then terminally
+`done` or `failed`. A scattered film can report `shards`, `gather`, `mux`, `finishing`, then
 `done` or `failed`. On `done`, `download_url` is a presigned link to the finished film with a
 **6 hour TTL** (`FILM_DOWNLOAD_TTL_SECONDS`); download it before it expires (a later `poll_film` re-issues a fresh one). On
 `failed`, the payload carries the real per-shot error: the studio never silently ships an

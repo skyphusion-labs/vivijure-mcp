@@ -9,7 +9,7 @@ Context Protocol Worker that proxies curated tools to a studio HTTP API (`STUDIO
 optionally to the hosted control plane (`CONTROL_PLANE_URL`). Hosts (`vivijure-cf`,
 `vivijure-local`) supply only wrangler/deploy config; implementation lives here.
 
-- Tool catalog: `export const TOOLS` in `src/mcp-tools.ts` (**109** tools at 1.3.0; re-count from
+- Tool catalog: `export const TOOLS` in `src/mcp-tools.ts` (**109** tools at 1.4.0; re-count from
   code if the number drifts -- do not treat this file as the ledger).
 - Dual target: studio tools use `STUDIO_API_TOKEN`; `cp_*` tools use `CONTROL_PLANE_ADMIN_TOKEN`.
 - Prod door example: `studio-mcp.vivijure.com` (operator-configured; not hard-wired in the package).
@@ -17,7 +17,7 @@ optionally to the hosted control plane (`CONTROL_PLANE_URL`). Hosts (`vivijure-c
 - Parity honesty: `docs/PARITY.md` (owner provision stays session-based; some render doors
   uncurated per cf#334).
 
-Version: see root `package.json` / latest `vivijure-mcp-v*` tag / `CHANGELOG.md` (**1.3.0** train).
+Version: see root `package.json` / latest `vivijure-mcp-v*` tag / `CHANGELOG.md` (**1.4.0** train).
 
 ## Relation to the constellation
 

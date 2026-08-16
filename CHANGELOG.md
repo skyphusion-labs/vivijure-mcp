@@ -21,6 +21,18 @@ the why behind each release. Newest first.
 - **docs:** full README front door; complete 1.3 tool reference (settings, demo, control plane);
   control-plane deploy section, hosted ops walkthrough, expanded troubleshooting; PARITY cross-link.
 
+## v1.4.0 -- 2026-08-16
+
+MINOR, additive: **`shard_count` on `submit_film`**.
+
+- **feat(mcp): expose `shard_count` on `submit_film`.** Studio `POST /api/render/film` accepts
+  `shard_count` (alias `shardCount`) so an agent can set film-render parallelism. Omitted, the
+  studio uses `min(shots, 20)` so a 20-worker pool is used; `1` is a serial film (one job); `N`
+  is clamped to the shot count. Present keys still forward via `bodyWithout`; omitted is not sent
+  as null. `poll_film` now documents that the same `GET /api/render/film/:id` path accepts
+  `film-*` or `scatter-*` ids and scatter phases (`shards` / `gather` / `mux` / `finishing` /
+  `done` / `failed`).
+
 ## v1.3.0 -- 2026-08-07
 
 MINOR, additive: **studio panel parity tools + hosted control-plane admin tools** (42 -> 109).

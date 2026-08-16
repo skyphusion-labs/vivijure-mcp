@@ -6,6 +6,11 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **docs(mcp): honest `submit_film` voice paths (mcp#29).** The tool description and `docs/mcp.md`
+  told agents to pass `cast_loras` for voice, but the studio hard-400s that parameter when the cast
+  member has no trained identity LoRA (and still 400s if you also set `voice_id`). Document both
+  paths: `dialogue_lines[].voice_id` for voice alone (no LoRA required; this is the speech path);
+  `cast_loras` for identity+voice (trained only). Omit untrained members from `cast_loras`.
 - **feat(mcp): `MCP_TOKEN_EXTRA`, an additive second gate secret.** The gate now accepts `MCP_TOKEN`
   OR any entry in `MCP_TOKEN_EXTRA` (comma- and/or newline-separated), so a new client can be issued
   its own credential without rewriting the operator's `MCP_TOKEN`. Worker secrets are write-only, so

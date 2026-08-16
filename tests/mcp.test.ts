@@ -393,6 +393,37 @@ describe("vivijure MCP tool dispatch", () => {
     expect("shardCount" in sent).toBe(false);
   });
 
+  it("submit_film description names voice_id as the path for untrained cast (mcp#29)", async () => {
+    // Phase-1 agents followed "pass cast_loras for voice" and hit a hard 400 when the member had a
+    // voice but no trained LoRA. The description must state both paths so that trap is not re-taught.
+    const res = await worker.fetch(
+      mcpRequest({ jsonrpc: "2.0", id: 29, method: "tools/list" }, AUTH),
+      ENV,
+    );
+    const body = (await res.json()) as {
+      result: {
+        tools: {
+          name: string;
+          description: string;
+          inputSchema: { properties: Record<string, { description?: string }> };
+        }[];
+      };
+    };
+    const tool = body.result.tools.find((t) => t.name === "submit_film");
+    expect(tool, "submit_film missing from tools/list").toBeDefined();
+    const desc = tool!.description;
+    expect(desc).toMatch(/voice_id/);
+    expect(desc).toMatch(/no trained LoRA|no LoRA required|NOT a voice-only path/i);
+    expect(desc).toMatch(/cast_loras/);
+    expect(desc).toMatch(/must not be passed for an untrained member/i);
+    const castDesc = tool!.inputSchema.properties.cast_loras?.description ?? "";
+    expect(castDesc).toMatch(/voice_id|trained/i);
+    expect(castDesc).toMatch(/400|untrained|Omit untrained/i);
+    const lineDesc = tool!.inputSchema.properties.dialogue_lines?.description ?? "";
+    expect(lineDesc).toMatch(/no trained LoRA|voice-only/i);
+    expect(lineDesc).toMatch(/Do not also pass that member in cast_loras/i);
+  });
+
   it("bad arguments return an isError result and never call the studio", async () => {
     const res = await worker.fetch(
       mcpRequest(

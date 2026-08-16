@@ -171,8 +171,8 @@ export const TOOLS: McpTool[] = [
   {
     name: "voices",
     description:
-      "GET /api/voices. The 12 valid Aura-1 speaker ids + labels; the only valid voice_id values for " +
-      "a cast member (see update_cast).",
+      "GET /api/voices. The 12 valid Aura-1 speaker ids + labels; the only legal voice_id values for " +
+      "update_cast AND for submit_film dialogue_lines[].voice_id (the voice-only film path, mcp#29).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/voices" }),
   },
@@ -807,10 +807,14 @@ export const TOOLS: McpTool[] = [
       "labels the render-history row with what was requested; omitted, the row records \"final\" " +
       "regardless of what actually ran (#382) -- it does not change what renders. shard_count (alias " +
       "shardCount): omitted, the studio uses min(shots, 20) so a 20-worker pool is used; 1 = one " +
-      "serial job; N is clamped to the shot count. VOICES: pass " +
-      "cast_loras so dialogue speaks with each cast member's voice; explicit dialogue_lines win over " +
-      "bundle-derived ones, and a line's own voice_id wins over the cast voice. Without cast_loras or " +
-      "voice_id, dialogue falls to the studio default voice.",
+      "serial job; N is clamped to the shot count. VOICES (two paths, mcp#29): " +
+      "(1) dialogue_lines[].voice_id (a name from the voices tool) is the voice-only path -- no " +
+      "trained LoRA required; use this when a cast member should speak but has no identity adapter. " +
+      "(2) cast_loras binds identity LoRA AND, for voiceless lines, that member's voice; the studio " +
+      "hard-400s if any bound member is untrained, so cast_loras is NOT a voice-only path and must " +
+      "not be passed for an untrained member even if you also set voice_id. " +
+      "explicit dialogue_lines win over bundle-derived ones; a line's own voice_id wins over any " +
+      "cast voice. Without cast_loras or voice_id, dialogue falls to the studio default voice.",
     inputSchema: OBJ(
       {
         bundle_key: STR("The bundleKey from bundle_storyboard."),
@@ -832,15 +836,19 @@ export const TOOLS: McpTool[] = [
         film_titles: { type: "object", description: "{ title?: { text, subtitle? }, credits?: { lines } }." },
         dialogue_lines: ARR(
           "[{ shot_id, text, voice_id? }] spoken lines for TTS + captions. voice_id (a name from the " +
-          "voices tool) overrides the speaker's cast voice; omit it and pass cast_loras to use the " +
-          "cast member's own voice.",
+          "voices tool) is the voice-only path: no trained LoRA required (mcp#29). It wins over any " +
+          "cast voice from cast_loras. Use this when a cast member should speak but has no identity " +
+          "adapter yet. Do not also pass that member in cast_loras -- the studio 400s the untrained " +
+          "binding even if every line has a voice_id.",
         ),
         cast_loras: {
           type: "object",
           description:
             "{ [slot]: castId } -- bind storyboard character slots (A, B, ...) to cast ids (from " +
-            "list_cast). Drives the keyframe LoRAs AND each speaking slot's voice; without it, " +
-            "dialogue voices fall to the default.",
+            "list_cast). Requires a trained identity LoRA on each bound member (studio 400s " +
+            "otherwise). Drives keyframe identity AND, for voiceless dialogue lines, that member's " +
+            "voice. Not a voice-only path -- for voice without LoRA, use dialogue_lines[].voice_id " +
+            "(mcp#29). Omit untrained members entirely.",
         },
         qualityTier: STR(
           "draft | standard | final (also listed in studio_modules render.quality_tiers). Labels " +

@@ -33,7 +33,8 @@ Honest map of what a human can do in **vivijure-cf** / **vivijure-local** panels
 | Render library | `/api/storyboard/renders*` | list/update/delete/tags + add-audio/narration |
 | Uploads | `/api/upload`, audio-upload | `upload_image`, `upload_audio` |
 | View / download artifacts | artifact, artifact-url | `view_artifact`, `artifact_url` |
-| Score bed / jobs | score-bed, `/api/job/:id` | `score_bed`, `poll_job` |
+| Score bed / jobs | score-bed, `/api/job/:id?module=` | `score_bed`, `poll_job` (`module` required on poll; studio 400s without it) |
+| Notify (render-complete email/webhook) | hook fires after film done; install config on `/api/modules/:name/config` | `get_module_config` / `patch_module_config` (e.g. notify-email `notify_email`). **No send-notify route** -- the studio does not serve one (mcp#26) |
 | Enhance / yaml / markers / analyze | corresponding POSTs | curated tools |
 | Module install/config | `/api/modules/install*`, config | curated tools |
 | Storage ledger | usage + reconcile | `storage_usage`, `storage_reconcile` |

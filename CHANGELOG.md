@@ -6,6 +6,15 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **feat(mcp): expose remaining audit route params (mcp#26).** Advertise fields the studio
+  routes already honor: `bundle_storyboard.startImage` / `sceneStartImages` (reverse-bridge
+  external keyframes); `chat.system_prompt` / `attachments` (text system message / image-input);
+  `train_cast_lora.model_family` (alias `modelFamily`) so the agent can see and choose Wan vs
+  SDXL. Score hook: `score_bed` already existed; schema now lists `kind` / `text` / `module` /
+  `seconds` / `config`, and `poll_job` now requires and forwards `module` as a query param
+  (CONTRACT 2.14; the studio 400s without it). Notify hook: no send-notify tool, because the
+  studio has no send route; recipient is install-scope config via `get_module_config` /
+  `patch_module_config`.
 - **docs(mcp): honest `submit_film` voice paths (mcp#29).** The tool description and `docs/mcp.md`
   told agents to pass `cast_loras` for voice, but the studio hard-400s that parameter when the cast
   member has no trained identity LoRA (and still 400s if you also set `voice_id`). Document both

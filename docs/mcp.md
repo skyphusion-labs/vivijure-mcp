@@ -275,6 +275,10 @@ email leak).
 **`get_module_config`** -- `GET /api/modules/:name/config`. Install-scope config with defaults filled.
 - `name` (required).
 
+This is also the **notify** hook surface (mcp#26). There is no send-notify route; the hook fires
+after a film completes. Read `notify-email`'s `notify_email` (or another `hooks['notify']` module)
+here.
+
 **`list_cast`** -- `GET /api/cast`. No arguments. Every cast member: id, name, bible, portrait,
 LoRA status, voice.
 
@@ -365,6 +369,10 @@ Returns `{ job_id, cast_id, phase, module?, registered, images, error? }`. Poll 
 Trains the character's identity LoRA and banks the adapter back onto the member, so a character is
 trained **once** and reused across every project.
 - `id` (required): the cast member's public id.
+- `model_family` (alias `modelFamily`): `sdxl` | `wan`. Omitted, the host picks Wan when
+  `RUNPOD_WAN_TRAIN_ENDPOINT_ID` is wired, SDXL otherwise. Pass one to choose (mcp#26). Explicit
+  `wan` on an unwired host is **501**, not a silent SDXL train. Top-level wins over the same key
+  inside `renderOverrides`.
 - `renderOverrides`: optional training overrides.
 
 **`train_cast_wan_lora`** -- `POST /api/cast/:id/train-wan-lora`. **Spends GPU** (Wan cast LoRA).
@@ -484,6 +492,11 @@ from the schema. Validate a bed via the render path, not preflight.
 **`chat`** -- `POST /api/chat`. The planner assistant and image generator, one tool.
 - `model` (required): a model id (text or image; see `storyboard_models` and the module registry).
 - `user_input` (required): the prompt.
+- `system_prompt`: text-path system message (default "You are a helpful assistant."); image-path
+  negative prompt.
+- `attachments`: image-input path (mcp#26). `[{ type: "image", data, mime?, filename? }]`. `data`
+  is a data URL or raw base64; `mime` is required when `data` is raw base64. Text models ignore
+  this.
 
 A text model returns `{ output }`. An image model returns `{ output_artifact: { key, mime } }`;
 feed that `key` to `set_cast_portrait`.
@@ -504,12 +517,23 @@ Additional planning / media helpers (inference or free CPU unless noted):
 **`render_plan`** -- `POST /api/storyboard/render-plan`. Build a plan without starting a spend render.
 - `storyboard` (required).
 
-**`score_bed`** -- `POST /api/storyboard/score-bed`. Start music/score generation; poll with
-**`poll_job`**.
-- Optional `storyboard`, `prompt`.
+**`score_bed`** -- `POST /api/storyboard/score-bed`. Start a score-hook job (`music-gen` /
+`narration-gen`). This is the curated score surface (mcp#26). Poll with **`poll_job`**, passing
+back the returned `module`.
+- `kind`: `music` (default) or `narration`.
+- `prompt`: required when `kind` is music.
+- `text`: narration script (required for narration unless `storyboard` is given).
+- `storyboard`: optional context; source for narration text when `text` is absent.
+- `module`: score module name from `studio_modules` `hooks['score']`.
+- `seconds`, `config`: optional target length and module config bag.
 
-**`poll_job`** -- `GET /api/job/:id`. Generic job poll (score-bed, enhance, …).
-- `id` (required).
+**`poll_job`** -- `GET /api/job/:id?module=`. Score-bed poll (the only `/api/job` route).
+- `id` (required): job id from `score_bed`.
+- `module` (required): the `module` `score_bed` returned. The studio **400s** without it.
+
+There is **no** send-notify tool. The `notify` hook fires after a film completes; the recipient
+lives in install-scope module config (`get_module_config` / `patch_module_config` on
+`notify-email` or another `hooks['notify']` module). The studio has no POST-to-notify route.
 
 ### Render (SPENDS MONEY)
 
@@ -519,6 +543,11 @@ itself does not spend GPU time.
 - `storyboard` (required): the storyboard to bundle.
 - `characterRefs` (required): `{ [slot]: ref }` cast references (see
   [CAST-BUNDLE.md](CAST-BUNDLE.md) for the ref shape; the Slate client is the reference consumer).
+- `startImage`: optional film-level start frame `{ key?, dataUrl?, filename? }`. Lands as
+  `start_image.png`.
+- `sceneStartImages`: reverse-bridge (mcp#26). `{ [sceneId]: { key?, dataUrl?, filename? } }`
+  keyed by storyboard scene id (`shot_NN`). Written as `clips/<id>_keyframe.png` for the i2v
+  start. Keys must match a scene id in the storyboard.
 
 **`submit_film`** -- `POST /api/render/film`. **STARTS A FILM RENDER. This spends real money** (GPU
 seconds on the render backend, or cloud i2v per-clip billing, depending on the motion backend).
@@ -681,6 +710,8 @@ store inventory (operator maintenance; may take a while on large buckets).
 **`patch_module_config`** -- `PATCH /api/modules/:name/config`.
 - `name` (required), `config` (required object of install-scope fields).
 - Render-scope keys are dropped by the studio (install subschema only).
+- Notify recipient: `{ notify_email: "ops@example.com" }` on `notify-email`. No send-notify
+  route exists; the hook fires on render complete (mcp#26).
 
 Pair with reads: `list_installed_modules`, `get_module_config`, `storage_usage`.
 
@@ -813,6 +844,7 @@ The full happy path. Steps 1 through 4 are free or inference-only; step 5 spends
    `quality` when you know the door so the duration-grid clamp can fire) -- keep fixing and
    re-running until `ok: true`.
 4. **`bundle_storyboard`** with `{ storyboard, characterRefs }` -- keep the returned `bundleKey`.
+   Optional `startImage` / `sceneStartImages` inject external keyframes as motion start frames.
 5. **`submit_film`** with
    `{ bundle_key, scenes, motion_backend, keyframe_config: { quality_tier } }` -- keep `film_id`.
    **This is the spend line.** For speech, add `dialogue_lines: [{ shot_id, text, voice_id }]`

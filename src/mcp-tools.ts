@@ -627,12 +627,21 @@ export const TOOLS: McpTool[] = [
       "POST /api/cast/:id/train-lora. THIS SPENDS GPU TIME (a training run, on the order of tens of " +
       "minutes). Trains the character's identity LoRA from the member's reference set and banks the " +
       "adapter back onto the member, so a character is trained ONCE and reused across every project. " +
-      "Body: { renderOverrides? }. Returns { ok, jobId, status, bundleKey, loraDestKey, cast }; then " +
-      "poll `cast_lora_status`. Add references first (add_cast_ref / generate_cast_refs) -- training " +
-      "an empty set is the expensive way to learn nothing.",
+      "Body: { model_family? (alias modelFamily), renderOverrides? }. Returns { ok, jobId, status, " +
+      "bundleKey, loraDestKey, modelFamily, cast }; then poll `cast_lora_status`. Add references " +
+      "first (add_cast_ref / generate_cast_refs) -- training an empty set is the expensive way to " +
+      "learn nothing. Omitted model_family, the host picks Wan when RUNPOD_WAN_TRAIN_ENDPOINT_ID is " +
+      "wired, SDXL otherwise; pass sdxl or wan to choose (mcp#26). Explicit wan on an unwired host " +
+      "is a 501, not a silent SDXL train. Sibling dedicated path: train_cast_wan_lora.",
     inputSchema: OBJ(
       {
         id: STR("Cast member public id."),
+        model_family: STR(
+          "sdxl | wan. Choose the train family. Omitted, the host picks Wan when the Wan train " +
+          "endpoint is wired, SDXL otherwise. Explicit wan on an unwired host is 501 (no silent " +
+          "SDXL substitute). Alias: modelFamily. Top-level wins over the same key in renderOverrides.",
+        ),
+        modelFamily: STR("Alias of model_family (studio accepts both). Prefer model_family."),
         renderOverrides: { type: "object", description: "Optional training overrides bag." },
       },
       ["id"],
@@ -748,12 +757,35 @@ export const TOOLS: McpTool[] = [
     name: "chat",
     description:
       "POST /api/chat. Planner assistant / image generation. Body: { model (req), user_input (req), " +
-      "... }. An image model returns { output_artifact: { key, mime } } (feed key to set_cast_portrait); " +
-      "a text model returns { output }. Use `storyboard_models` / the module registry for model ids.",
+      "system_prompt?, attachments? }. An image model returns { output_artifact: { key, mime } } " +
+      "(feed key to set_cast_portrait); a text model returns { output }. Use `storyboard_models` / " +
+      "the module registry for model ids. system_prompt is the text-path system message (default " +
+      "'You are a helpful assistant.') and the image-path negative prompt. attachments is the " +
+      "image-input path (mcp#26): [{ type: 'image', data, mime?, filename? }].",
     inputSchema: OBJ(
       {
         model: STR("Model id (text or image)."),
         user_input: STR("The prompt."),
+        system_prompt: STR(
+          "Optional system message on the text path (default: 'You are a helpful assistant.'). " +
+          "On an image model this is the negative prompt.",
+        ),
+        attachments: {
+          type: "array",
+          description:
+            "Image-input refs for image models (mcp#26). [{ type: 'image', data, mime?, filename? }]. " +
+            "`data` is a data URL or raw base64; `mime` is required when data is raw base64 " +
+            "(e.g. image/png). Text models ignore this.",
+          items: {
+            type: "object",
+            properties: {
+              type: STR("Must be 'image' to be consumed."),
+              data: STR("Data URL or raw base64."),
+              mime: STR("Required when data is raw base64 (e.g. image/png)."),
+              filename: STR("Optional filename."),
+            },
+          },
+        },
       },
       ["model", "user_input"],
     ),
@@ -769,12 +801,27 @@ export const TOOLS: McpTool[] = [
     name: "bundle_storyboard",
     description:
       "POST /api/storyboard/bundle. Assemble a render bundle (storyboard + cast refs) and return its " +
-      "R2 bundleKey, the input to submit_film. Body: { storyboard (req), characterRefs (req), ... }. " +
-      "characterRefs is { [slot]: { ... } } (see docs/CAST-BUNDLE.md / the Slate client).",
+      "R2 bundleKey, the input to submit_film. Body: { storyboard (req), characterRefs (req), " +
+      "startImage?, sceneStartImages? }. characterRefs is { [slot]: { ... } } (see " +
+      "docs/CAST-BUNDLE.md / the Slate client). startImage / sceneStartImages are the reverse-bridge " +
+      "(mcp#26): external keyframes as the film start or per-scene motion start frames.",
     inputSchema: OBJ(
       {
         storyboard: { type: "object", description: "The storyboard to bundle." },
         characterRefs: { type: "object", description: "{ [slot]: ref } cast references." },
+        startImage: {
+          type: "object",
+          description:
+            "Optional film-level start frame { key?, dataUrl?, filename? }. R2 key preferred; " +
+            "dataUrl for inline. Lands in the bundle as start_image.png.",
+        },
+        sceneStartImages: {
+          type: "object",
+          description:
+            "Reverse-bridge (mcp#26): per-scene motion start frames keyed by storyboard scene id " +
+            "(shot_NN). Each value is { key?, dataUrl?, filename? }. Written as " +
+            "clips/<id>_keyframe.png for the i2v start. Keys must match a scene id in the storyboard.",
+        },
       },
       ["storyboard", "characterRefs"],
     ),
@@ -1079,7 +1126,9 @@ export const TOOLS: McpTool[] = [
   {
     name: "get_module_config",
     description:
-      "GET /api/modules/:name/config. Install-scope config for one module (defaults filled).",
+      "GET /api/modules/:name/config. Install-scope config for one module (defaults filled). " +
+      "This is the notify-hook surface (mcp#26): there is no send-notify route; the hook fires " +
+      "after a film completes. Read notify-email's notify_email (or another notify module) here.",
     inputSchema: OBJ({ name: STR("Module name.") }, ["name"]),
     build: (a) => ({
       method: "GET",
@@ -1089,7 +1138,9 @@ export const TOOLS: McpTool[] = [
   {
     name: "patch_module_config",
     description:
-      "PATCH /api/modules/:name/config. Patch install-scope fields only (render-scope keys dropped).",
+      "PATCH /api/modules/:name/config. Patch install-scope fields only (render-scope keys dropped). " +
+      "Notify recipient lives here (e.g. { notify_email: 'ops@example.com' } on notify-email). " +
+      "There is no send-notify route; the hook fires on render complete (mcp#26).",
     inputSchema: OBJ(
       {
         name: STR("Module name."),
@@ -1154,11 +1205,19 @@ export const TOOLS: McpTool[] = [
   {
     name: "score_bed",
     description:
-      "POST /api/storyboard/score-bed (music generate). Starts a score/music job. Poll with poll_job.",
+      "POST /api/storyboard/score-bed. Starts a score-hook job (music-gen / narration-gen). Poll " +
+      "with poll_job, passing back the returned `module`. Body: { kind?, prompt?, text?, " +
+      "storyboard?, module?, seconds?, config? }. kind defaults to music (prompt required); " +
+      "kind=narration needs text or storyboard. This is the curated score-hook surface (mcp#26).",
     inputSchema: OBJ(
       {
-        storyboard: { type: "object", description: "Storyboard context for the score." },
-        prompt: STR("Optional music prompt override."),
+        kind: STR("music | narration. Omitted, music. Music requires prompt; narration needs text or storyboard."),
+        prompt: STR("Music prompt. Required when kind is music (the default)."),
+        text: STR("Narration script. Required for kind=narration unless storyboard is given."),
+        storyboard: { type: "object", description: "Storyboard context; source for narration text when text is absent." },
+        module: STR("Score module name (from studio_modules hooks['score']). Omitted, the studio picks the serving module."),
+        seconds: NUM("Optional target length in seconds."),
+        config: { type: "object", description: "Module config bag (nested; not top-level knobs)." },
       },
     ),
     build: (a) => ({
@@ -1170,11 +1229,20 @@ export const TOOLS: McpTool[] = [
   {
     name: "poll_job",
     description:
-      "GET /api/job/:id. Poll a generic studio job (score-bed, enhance, etc.) until done/failed.",
-    inputSchema: OBJ({ id: STR("Job id from score_bed or similar.") }, ["id"]),
+      "GET /api/job/:id?module=. Poll a score-bed job until done/failed. The studio 400s without " +
+      "`module` (CONTRACT 2.14); pass the `module` score_bed returned. This is the only /api/job " +
+      "route; it is the score-hook poll, not a generic enhance poll (mcp#26).",
+    inputSchema: OBJ(
+      {
+        id: STR("Job id from score_bed."),
+        module: STR("Score module name returned by score_bed. Required; the studio 400s without it."),
+      },
+      ["id", "module"],
+    ),
     build: (a) => ({
       method: "GET",
       path: `/api/job/${encodeURIComponent(reqStr(a, "id"))}`,
+      query: { module: reqStr(a, "module") },
     }),
   },
   {

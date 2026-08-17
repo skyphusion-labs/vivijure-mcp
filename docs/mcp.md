@@ -790,8 +790,11 @@ All take `id` = `ten_…` unless noted. Scope names in parentheses.
 
 ### Escape hatch
 
-**`studio_request`** -- any studio CONTRACT path (JSON body only; binary summarized).
-- `method` (required), `path` (required, starts with `/`), optional `query`, `body`.
+**`studio_request`** -- studio CONTRACT path under `/api/` (JSON body only; binary summarized).
+- `method` (required), `path` (required, must start with `/api/`), optional `query`, `body`.
+- Refused: `//`, `.` / `..` segments, encoded dots, `http:` / `https:`, over-length paths,
+  and control-plane `/api/admin` or `/api/platform` (use `control_plane_request`).
+- Fetch uses `redirect: "manual"` so `Authorization` cannot hop.
 - Use for uncurated doors (e.g. `/api/storyboard/render` until cf#334). Prefer curated tools.
 
 **`control_plane_request`** -- any control-plane path with the admin bearer.
@@ -855,8 +858,9 @@ for creative tools (separate from the admin bearer).
   observability stream.
 - Keep it on a custom domain (`workers.dev` stays disabled in the example config) so the bearer gate
   is not the only thing between the public internet and your studio credential.
-- `studio_request` is bounded in FORMAT (JSON in/out, binary summarized) but not in REACH. The gate
-  is the control, not per-tool allowlisting: anyone holding `MCP_TOKEN` holds the studio.
+- `studio_request` is bounded in FORMAT (JSON in/out, binary summarized) and in REACH (`/api/` on
+  the configured studio origin; no redirects; no control-plane routes). The gate is still the
+  primary control: anyone holding `MCP_TOKEN` holds the studio write path.
 - When control plane is armed, `MCP_TOKEN` also reaches **every admin capability** of the seeded
   operator token (upgrade, suspend, teardown, credits if scoped). Prefer scoped `opc_…`
   credentials; never put root admin in a shared agent profile.

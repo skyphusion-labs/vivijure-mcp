@@ -26,6 +26,19 @@ the why behind each release. Newest first.
 - **docs:** full README front door; complete 1.3 tool reference (settings, demo, control plane);
   control-plane deploy section, hosted ops walkthrough, expanded troubleshooting; PARITY cross-link.
 
+## v1.4.1 -- 2026-08-17
+
+PATCH: **harden `studio_request`**.
+
+- **fix(security): bound `studio_request` to same-origin `/api/` paths.** The escape hatch
+  accepted any string starting with `/`, so `//`, `/../`, encoded dots (`%2e`), and `http:`
+  were legal arguments. Path must now start with `/api/`, cannot contain `//`, `.` / `..`
+  segments, encoded dots, or a URL scheme, and is length-capped. Control-plane
+  `/api/admin` and `/api/platform` routes are refused here (use `control_plane_request`).
+  `runTool` fetches with `redirect: "manual"` so a 3xx cannot hop `Authorization` onto
+  another origin. `studioUrl` refuses a resolved URL whose origin is not the configured
+  target. `target` in the tool args cannot retarget the control plane.
+
 ## v1.4.0 -- 2026-08-16
 
 MINOR, additive: **`shard_count` on `submit_film`**.

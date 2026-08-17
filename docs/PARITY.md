@@ -4,7 +4,7 @@ Honest map of what a human can do in **vivijure-cf** / **vivijure-local** panels
 **vivijure-control-plane** operator surface, versus curated MCP tools. Escape hatches
 (`studio_request`, `control_plane_request`) cover remainder that is JSON-shaped.
 
-**Version:** package `1.4.0` -- re-count tools from `src/mcp-tools.ts` (`TOOLS.length`).
+**Version:** package `1.4.1` -- re-count tools from `src/mcp-tools.ts` (`TOOLS.length`).
 
 ## Verdict
 

@@ -1827,9 +1827,12 @@ export const TOOLS: McpTool[] = [
   {
     name: "studio_request",
     description:
-      "Generic escape hatch to ANY studio route in docs/CONTRACT.md not covered by a curated tool " +
+      "Generic escape hatch to a studio CONTRACT route under /api/ not covered by a curated tool " +
       "(e.g. storyboard/render doors that remain uncurated until cf#334 sound reconciliation, " +
-      "settings/secrets if present on the host). JSON only; binary summarized. path must start with '/'.",
+      "settings/secrets if present on the host). JSON only; binary summarized. " +
+      "path must start with '/api/' (no '//', '..', encoded dots, or http(s) schemes; length capped). " +
+      "Control-plane /api/admin and /api/platform routes are refused here; use control_plane_request. " +
+      "Redirects are not followed.",
     inputSchema: OBJ(
       {
         method: {
@@ -1837,7 +1840,7 @@ export const TOOLS: McpTool[] = [
           enum: ["GET", "POST", "PATCH", "PUT", "DELETE"],
           description: "HTTP method.",
         },
-        path: STR("Studio path starting with '/', e.g. '/api/storyboard/renders/tags'."),
+        path: STR("Studio path starting with '/api/', e.g. '/api/storyboard/renders/tags'."),
         query: { type: "object", description: "Optional query params (string/number values)." },
         body: {
           type: ["object", "string"],
@@ -1876,6 +1879,80 @@ export const TOOLS: McpTool[] = [
   },
 ];
 
+/** Hard cap on the studio_request path argument (path only, not query). */
+export const STUDIO_REQUEST_MAX_PATH_LEN = 512;
+
+function isControlPlaneApiPath(path: string): boolean {
+  const p = path.toLowerCase();
+  return (
+    p === "/api/admin" ||
+    p.startsWith("/api/admin/") ||
+    p === "/api/platform" ||
+    p.startsWith("/api/platform/")
+  );
+}
+
+function pathHasIllegalDotSegment(path: string): boolean {
+  const only = path.split("?")[0].split("#")[0];
+  return only.split("/").some((seg) => seg === "." || seg === "..");
+}
+
+/** Refuse SSRF / traversal / control-plane reach through the studio escape hatch. */
+export function assertSafeStudioRequestPath(path: string): void {
+  if (path.length > STUDIO_REQUEST_MAX_PATH_LEN) {
+    throw new Error(`path exceeds ${STUDIO_REQUEST_MAX_PATH_LEN} characters`);
+  }
+  if (!path.startsWith("/api/")) {
+    throw new Error("path must start with '/api/'");
+  }
+  if (path.includes("//")) {
+    throw new Error("path must not contain '//'");
+  }
+  const lower = path.toLowerCase();
+  if (lower.includes("http:") || lower.includes("https:")) {
+    throw new Error("path must not contain a URL scheme");
+  }
+  if (lower.includes("%2e")) {
+    throw new Error("path must not contain encoded dots");
+  }
+  if (path.includes("..") || pathHasIllegalDotSegment(path)) {
+    throw new Error("path must not contain '.' or '..' segments");
+  }
+  if (path.includes("\\") || path.includes("\0")) {
+    throw new Error("path contains illegal characters");
+  }
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    throw new Error("path is not valid percent-encoding");
+  }
+  if (decoded !== path) {
+    if (!decoded.startsWith("/api/")) {
+      throw new Error("path must start with '/api/'");
+    }
+    if (decoded.includes("//") || decoded.includes("..") || pathHasIllegalDotSegment(decoded)) {
+      throw new Error("path must not contain '//' or '..'");
+    }
+    const dlower = decoded.toLowerCase();
+    if (dlower.includes("http:") || dlower.includes("https:") || dlower.includes("%2e")) {
+      throw new Error("path must not contain a URL scheme or encoded dots");
+    }
+    if (decoded.includes("\\") || decoded.includes("\0")) {
+      throw new Error("path contains illegal characters");
+    }
+  }
+
+  const pathOnly = path.split("?")[0].split("#")[0];
+  const decodedOnly = decoded.split("?")[0].split("#")[0];
+  if (isControlPlaneApiPath(pathOnly) || isControlPlaneApiPath(decodedOnly)) {
+    throw new Error(
+      "control-plane routes are not reachable via studio_request; use control_plane_request or a curated cp_* tool",
+    );
+  }
+}
+
 function genericRequest(
   a: Record<string, unknown>,
   target: CallTarget,
@@ -1885,7 +1962,11 @@ function genericRequest(
     throw new Error(`invalid method '${String(a.method)}'`);
   }
   const path = reqStr(a, "path");
-  if (!path.startsWith("/")) throw new Error("path must start with '/'");
+  if (target === "studio") {
+    assertSafeStudioRequestPath(path);
+  } else if (!path.startsWith("/")) {
+    throw new Error("path must start with '/'");
+  }
   const query =
     a.query && typeof a.query === "object"
       ? (a.query as Record<string, string | number | undefined>)
@@ -1926,6 +2007,10 @@ export function studioUrl(env: McpEnv, call: StudioCall): string {
     );
   }
   const url = new URL(base + call.path);
+  const baseUrl = new URL(base);
+  if (url.origin !== baseUrl.origin) {
+    throw new Error("path must not change the request origin");
+  }
   if (call.query) {
     for (const [k, v] of Object.entries(call.query)) {
       if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
@@ -1997,7 +2082,8 @@ export async function runTool(
   }
 
   const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
-  const init: RequestInit = { method: call.method, headers };
+  // manual: a 3xx must not carry Authorization onto another origin.
+  const init: RequestInit = { method: call.method, headers, redirect: "manual" };
   const sendsBody = call.method !== "GET" && call.method !== "DELETE";
   if (call.rawBody !== undefined && sendsBody) {
     // cf#317: a bytes-in route reads the RAW request body and dispatches on the content-type header,

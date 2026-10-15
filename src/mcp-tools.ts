@@ -6,9 +6,10 @@
 // the JSON reply is returned to the agent as MCP text content. Nothing here holds studio state: the
 // MCP is stateless, and long-running renders are driven by the agent polling `poll_film`.
 //
-// Forward-compatibility: the POST/PATCH tools forward their whole argument object as the request body
-// (minus any path parameter), so a new optional field in the contract is usable through the existing
-// tool without a code change here. The documented fields are listed in each inputSchema as hints.
+// Declared fields are the contract. submit_film calls rejectUndeclared before build and refuses
+// any argument its inputSchema does not list, so a typo cannot ride bodyWithout into a render that
+// looks successful (mcp#61). Other tools still drop undeclared keys inside build (preflight, mcp#26).
+// A new optional field on submit_film is usable once it is added to that schema.
 //
 // Bytes IN (cf#317): the studio's upload routes take a RAW body, not JSON, so a tool aiming at one
 // sets `rawBody` instead of `body`. The two are mutually exclusive BY TYPE rather than by a runtime
@@ -154,6 +155,26 @@ function bodyWithout(args: Record<string, unknown>, ...omit: string[]): Record<s
     if (!omit.includes(k) && v !== undefined) out[k] = v;
   }
   return out;
+}
+
+function hintForUndeclared(key: string, declared: Set<string>): string {
+  const camel = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  if (camel !== key && declared.has(camel)) return `'${key}' (use '${camel}')`;
+  if (key === "resolution" && declared.has("motion_config")) {
+    return `'resolution' (set it inside motion_config)`;
+  }
+  return `'${key}'`;
+}
+
+/** Refuse arguments the tool does not declare. The names are the agent's only signal. */
+export function rejectUndeclared(schema: Record<string, unknown>, args: Record<string, unknown>): void {
+  const properties = schema.properties;
+  const declared = new Set(
+    properties && typeof properties === "object" ? Object.keys(properties as Record<string, unknown>) : [],
+  );
+  const unknown = Object.keys(args).filter((key) => !declared.has(key));
+  if (unknown.length === 0) return;
+  throw new Error(`undeclared argument ${unknown.map((key) => hintForUndeclared(key, declared)).join("; ")}`);
 }
 
 export const TOOLS: McpTool[] = [
@@ -904,9 +925,10 @@ export const TOOLS: McpTool[] = [
           "is driven by keyframe_config / motion_config.",
         ),
         shard_count: NUM(
-          "Parallel film shard count (alias shardCount). Omitted, the studio uses min(shots, 20) " +
-          "so a 20-worker pool is used. 1 = one serial job. N is clamped to the shot count.",
+          "Parallel film shard count. Omitted, the studio uses min(shots, 20) so a 20-worker " +
+          "pool is used. 1 = one serial job. N is clamped to the shot count.",
         ),
+        shardCount: NUM("Alias of shard_count. The studio accepts either name."),
       },
       ["bundle_key", "scenes"],
     ),

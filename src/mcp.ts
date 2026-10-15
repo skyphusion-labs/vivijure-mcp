@@ -18,7 +18,7 @@
 // until done/failed. This server never long-polls or holds job state.
 
 import type { McpEnv } from "./mcp-env.js";
-import { TOOLS, TOOLS_BY_NAME, runTool } from "./mcp-tools.js";
+import { TOOLS, TOOLS_BY_NAME, rejectUndeclared, runTool } from "./mcp-tools.js";
 
 // KEEP IN SYNC WITH package.json "version". This is the ONLY version an MCP client can read off the
 // wire (`serverInfo` in the initialize reply), and it sat at 0.1.0 from v1.0.0 through v1.0.1 while
@@ -140,6 +140,9 @@ async function handleRpc(msg: RpcMessage, env: McpEnv): Promise<unknown> {
       const args = (params?.arguments as Record<string, unknown>) || {};
       let call;
       try {
+        // submit_film only. preflight drops undeclared keys and still calls (mcp#26).
+        // A typo on submit_film must not ride into a render that looks successful (mcp#61).
+        if (name === "submit_film") rejectUndeclared(tool.inputSchema, args);
         call = tool.build(args);
       } catch (err) {
         // A bad argument is DATA, not a transport error: return it as an isError tool result so the

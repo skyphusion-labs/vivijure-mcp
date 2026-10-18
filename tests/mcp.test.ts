@@ -327,6 +327,89 @@ describe("vivijure MCP tool dispatch", () => {
     expect("qualityTier" in sent).toBe(false);
   });
 
+  it("submit_film refuses resolution and names it (mcp#61)", async () => {
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 61,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+              resolution: "480p",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean; content: { text: string }[] } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("resolution");
+    expect(body.result.content[0].text).toContain("motion_config");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("submit_film refuses quality_tier and names qualityTier (mcp#61)", async () => {
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 62,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+              quality_tier: "draft",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean; content: { text: string }[] } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("quality_tier");
+    expect(body.result.content[0].text).toContain("qualityTier");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("submit_film accepts motion_config plus qualityTier (mcp#61)", async () => {
+    const motion_config = { resolution: "480p" };
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 63,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+              motion_config,
+              qualityTier: "draft",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean } };
+    expect(body.result.isError).toBe(false);
+    const sent = JSON.parse(calls[0].init.body as string);
+    expect(sent.motion_config).toEqual(motion_config);
+    expect(sent.qualityTier).toBe("draft");
+  });
+
   it("submit_film exposes shard_count in its inputSchema", async () => {
     const res = await worker.fetch(
       mcpRequest({ jsonrpc: "2.0", id: 33, method: "tools/list" }, AUTH),
@@ -337,7 +420,12 @@ describe("vivijure MCP tool dispatch", () => {
     };
     const tool = body.result.tools.find((t) => t.name === "submit_film");
     expect(tool, "submit_film missing from tools/list").toBeDefined();
-    expect(Object.keys(tool!.inputSchema.properties)).toContain("shard_count");
+    const props = Object.keys(tool!.inputSchema.properties);
+    expect(props).toContain("shard_count");
+    expect(props).toContain("shardCount");
+    expect(props).toContain("finish_select");
+    expect(props).toContain("idempotency_key");
+    expect(props).toContain("idempotencyKey");
   });
 
   it("submit_film forwards shard_count to the studio body", async () => {
@@ -391,6 +479,39 @@ describe("vivijure MCP tool dispatch", () => {
     const sent = JSON.parse(calls[0].init.body as string);
     expect("shard_count" in sent).toBe(false);
     expect("shardCount" in sent).toBe(false);
+  });
+
+  it("submit_film accepts shardCount, finish_select, and both idempotency key names", async () => {
+    const finish_select = { mode: "default" };
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 36,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+              shardCount: 2,
+              finish_select,
+              idempotency_key: "retry-1",
+              idempotencyKey: "retry-2",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean; content?: { text: string }[] } };
+    expect(body.result.isError, body.result.content?.[0]?.text).toBe(false);
+    const sent = JSON.parse(calls[0].init.body as string);
+    expect(sent.shardCount).toBe(2);
+    expect(sent.finish_select).toEqual(finish_select);
+    expect(sent.idempotency_key).toBe("retry-1");
+    expect(sent.idempotencyKey).toBe("retry-2");
   });
 
   it("submit_film description names voice_id as the path for untrained cast (mcp#29)", async () => {

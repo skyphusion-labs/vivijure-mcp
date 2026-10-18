@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { TOOLS_BY_NAME } from "../src/mcp-tools.js";
 
 // mcp#26 leftovers: advertise (and forward) route params the studio already honors.
-// bodyWithout forwards undeclared keys, so the real gap is discoverability -- tools/list
-// / inputSchema is the agent-facing map. Assert the map AND the forwarded body/query.
+// Undeclared keys are refused at the tool boundary (mcp#61). tools/list / inputSchema
+// is the agent-facing map. Assert the map AND the forwarded body/query.
 
 const tool = (name: string) => {
   const t = TOOLS_BY_NAME.get(name);

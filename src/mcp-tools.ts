@@ -863,7 +863,7 @@ export const TOOLS: McpTool[] = [
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
-      "qualityTier?, shard_count? }. " +
+      "qualityTier?, shard_count?, finish_select?, idempotency_key? }. " +
       "Each *_config is { [moduleName]: config }, feeding one hook stage: finish_config -> the per-shot " +
       "finish chain, speech_config -> the speech (dialogue-audio) chain, film_finish_config -> the " +
       "film.finish chain on the assembled film (this is where SUBTITLE mode burn/sidecar/both and the " +
@@ -875,7 +875,9 @@ export const TOOLS: McpTool[] = [
       "labels the render-history row with what was requested; omitted, the row records \"final\" " +
       "regardless of what actually ran (#382) -- it does not change what renders. shard_count (alias " +
       "shardCount): omitted, the studio uses min(shots, 20) so a 20-worker pool is used; 1 = one " +
-      "serial job; N is clamped to the shot count. VOICES (two paths, mcp#29): " +
+      "serial job; N is clamped to the shot count. finish_select is the cf#386 omit rule: omit it and " +
+      "finish_config for no finish, or pass { mode: \"default\" } for the participation set. " +
+      "idempotency_key (alias idempotencyKey) is the client retry key (cf#528). VOICES (two paths, mcp#29): " +
       "(1) dialogue_lines[].voice_id (a name from the voices tool) is the voice-only path -- no " +
       "trained LoRA required; use this when a cast member should speak but has no identity adapter. " +
       "(2) cast_loras binds identity LoRA AND, for voiceless lines, that member's voice; the studio " +
@@ -929,6 +931,15 @@ export const TOOLS: McpTool[] = [
           "pool is used. 1 = one serial job. N is clamped to the shot count.",
         ),
         shardCount: NUM("Alias of shard_count. The studio accepts either name."),
+        finish_select: {
+          type: "object",
+          description:
+            "Per-shot finish selection. cf#386 omit rule: omit this and finish_config for no finish; { mode: \"default\" } asks for the participation set.",
+        },
+        idempotency_key: STR(
+          "Client retry key for POST /api/render/film (cf#528). A non-blank string replaces the 60s natural-key backstop. A blank or non-string is absence.",
+        ),
+        idempotencyKey: STR("Alias of idempotency_key. The studio reads either name."),
       },
       ["bundle_key", "scenes"],
     ),

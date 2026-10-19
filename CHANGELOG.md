@@ -18,16 +18,33 @@ MAJOR, a removal: **the four demo tools are gone** (109 -> 105 tools, 13 -> 12 g
   failure. Cut as MAJOR rather than MINOR on purpose: a caret range must NOT pull a tool removal
   in silently. Catalog figures re-derived from the catalog, not hand-adjusted: 105 tools,
   67 studio, 38 control plane, 12 documented groups.
-- **fix(mcp): refuse undeclared `submit_film` arguments (mcp#61).** `submit_film` calls
-  `rejectUndeclared` before build, so a misspelled field is an error instead of a silently
-  dropped key that renders something that looks successful. Other tools still drop undeclared
-  keys inside build (mcp#26).
 
-**REGISTRY NOTE.** npm `latest` was **1.3.0** when this was cut: the `v1.4.1` tag was pushed
-without the `vivijure-mcp-v` prefix the publish workflow matches on, and 1.4.0 was never tagged
-at all, so neither reached the registry. Their sections below stand as the git record, and 2.0.0
-is the first PUBLISHED release carrying the 1.4.x content. The mechanism that let a mistyped tag
-go unnoticed is mcp#70, not this release.
+**REGISTRY NOTE.** npm `latest` was **1.3.0** when this was cut, three releases behind
+`package.json`: the 1.4.1 tag had been pushed as `v1.4.1`, without the `vivijure-mcp-v` prefix the
+publish workflow matches on, so no run was triggered and nothing was published. An absent workflow
+run is indistinguishable from a passed one, which is why it went unnoticed; the mechanism is mcp#70,
+not this release. **1.4.1 was published first, on 2026-10-19, ahead of this release and
+deliberately:** consumers pin `^1.3.0`, so the 1.4.x line reaches them on their next install with
+no consumer edit, and a tool removal must never travel that way. 1.4.0 was never tagged under
+either prefix and is not being published; its section below stands as the git record only.
+
+## v1.4.1 -- 2026-08-17
+
+PATCH: **harden `studio_request`**.
+
+**PUBLISHED 2026-10-19, and the tag carries more than this section originally described.**
+The tag was cut at `main` HEAD `c7bd6fb9`, not at the commit this section was written against,
+so the 1.4.1 tarball also contains everything merged after it. Those entries are listed
+below rather than under 2.0.0, because this is the release they first shipped in.
+
+- **fix(security): bound `studio_request` to same-origin `/api/` paths.** The escape hatch
+  accepted any string starting with `/`, so `//`, `/../`, encoded dots (`%2e`), and `http:`
+  were legal arguments. Path must now start with `/api/`, cannot contain `//`, `.` / `..`
+  segments, encoded dots, or a URL scheme, and is length-capped. Control-plane
+  `/api/admin` and `/api/platform` routes are refused here (use `control_plane_request`).
+  `runTool` fetches with `redirect: "manual"` so a 3xx cannot hop `Authorization` onto
+  another origin. `studioUrl` refuses a resolved URL whose origin is not the configured
+  target. `target` in the tool args cannot retarget the control plane.
 
 - **feat(mcp): expose remaining audit route params (mcp#26).** Advertise fields the studio
   routes already honor: `bundle_storyboard.startImage` / `sceneStartImages` (reverse-bridge
@@ -57,19 +74,10 @@ go unnoticed is mcp#70, not this release.
   matching all-space bearer and now yields no credential at all.
 - **docs:** full README front door; complete 1.3 tool reference (settings, demo, control plane);
   control-plane deploy section, hosted ops walkthrough, expanded troubleshooting; PARITY cross-link.
-
-## v1.4.1 -- 2026-08-17
-
-PATCH: **harden `studio_request`**.
-
-- **fix(security): bound `studio_request` to same-origin `/api/` paths.** The escape hatch
-  accepted any string starting with `/`, so `//`, `/../`, encoded dots (`%2e`), and `http:`
-  were legal arguments. Path must now start with `/api/`, cannot contain `//`, `.` / `..`
-  segments, encoded dots, or a URL scheme, and is length-capped. Control-plane
-  `/api/admin` and `/api/platform` routes are refused here (use `control_plane_request`).
-  `runTool` fetches with `redirect: "manual"` so a 3xx cannot hop `Authorization` onto
-  another origin. `studioUrl` refuses a resolved URL whose origin is not the configured
-  target. `target` in the tool args cannot retarget the control plane.
+- **fix(mcp): refuse undeclared `submit_film` arguments (mcp#61).** `submit_film` calls
+  `rejectUndeclared` before build, so a misspelled field is an error instead of a silently
+  dropped key that renders something that looks successful. Other tools still drop undeclared
+  keys inside build (mcp#26).
 
 ## v1.4.0 -- 2026-08-16
 

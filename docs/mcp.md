@@ -176,7 +176,7 @@ curl -s https://studio-mcp.example.com/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-You should get a JSON-RPC result listing all 109 tools. The same request **without** the header must
+You should get a JSON-RPC result listing all 105 tools. The same request **without** the header must
 return `401` -- if it does not, stop and check your `MCP_TOKEN` seeding before wiring any client.
 
 Note the split: a missing or wrong `MCP_TOKEN` fails at the door (`401`), but a missing or wrong
@@ -243,7 +243,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-**109** tools in **13** groups. Arguments marked **(required)** must be present; everything else is
+**105** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -714,21 +714,6 @@ store inventory (operator maintenance; may take a while on large buckets).
   route exists; the hook fires on render complete (mcp#26).
 
 Pair with reads: `list_installed_modules`, `get_module_config`, `storage_usage`.
-
-### Demo mode
-
-Only when the host enables the curated demo path (no open GPU spend).
-
-**`demo_menu`** -- `GET /api/demo/menu`. Recipe list.
-
-**`demo_chat`** -- `POST /api/demo/chat`.
-- `user_input` (required), `model` optional.
-
-**`demo_render`** -- `POST /api/demo/render`.
-- `id` (required): recipe id from the menu.
-
-**`poll_demo_render`** -- `GET /api/demo/render/:id`.
-- `id` (required): job id from `demo_render`.
 
 ### Control plane (platform)
 

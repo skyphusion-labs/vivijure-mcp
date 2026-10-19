@@ -1385,48 +1385,6 @@ export const TOOLS: McpTool[] = [
       body: bodyWithout(a),
     }),
   },
-  {
-    name: "demo_menu",
-    description: "GET /api/demo/menu. Curated demo path menu (when the host enables demo mode).",
-    inputSchema: OBJ({}),
-    build: () => ({ method: "GET", path: "/api/demo/menu" }),
-  },
-  {
-    name: "demo_chat",
-    description: "POST /api/demo/chat. Demo-mode chat (curated, no open spend).",
-    inputSchema: OBJ(
-      { user_input: STR("Prompt."), model: STR("Optional model id.") },
-      ["user_input"],
-    ),
-    build: (a) => ({
-      method: "POST",
-      path: "/api/demo/chat",
-      body: bodyWithout(a),
-    }),
-  },
-  {
-    name: "demo_render",
-    description: "POST /api/demo/render. Start a demo render. Poll with poll_demo_render.",
-    inputSchema: OBJ(
-      { id: STR("Demo recipe id from demo_menu.") },
-      ["id"],
-    ),
-    build: (a) => ({
-      method: "POST",
-      path: "/api/demo/render",
-      body: bodyWithout(a),
-    }),
-  },
-  {
-    name: "poll_demo_render",
-    description: "GET /api/demo/render/:id. Poll a demo render job.",
-    inputSchema: OBJ({ id: STR("Demo render job id.") }, ["id"]),
-    build: (a) => ({
-      method: "GET",
-      path: `/api/demo/render/${encodeURIComponent(reqStr(a, "id"))}`,
-    }),
-  },
-
   // --- control plane (hosted platform admin; needs CONTROL_PLANE_* bindings) ---
   {
     name: "cp_whoami",

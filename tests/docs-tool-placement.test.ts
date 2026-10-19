@@ -61,7 +61,6 @@ const EXPECTED: [string, number][] = [
   ["Bytes in (bring your own image or audio)", 2],
   ["Artifacts (see what you made)", 2],
   ["Studio settings and modules (write)", 6],
-  ["Demo mode", 4],
   ["Control plane (platform)", 16],
   ["Control plane (tenants)", 21],
   ["Escape hatch", 2],

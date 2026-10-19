@@ -11,7 +11,7 @@ Honest map of what a human can do in **vivijure-cf** / **vivijure-local** panels
 | Surface | Parity |
 |---------|--------|
 | Studio creative path (cast, plan, bundle, **film** render, library, uploads, artifacts) | **Curated** -- full human film loop |
-| Studio panel extras (prefs, modules install/config, storage, score-bed, clips, demo) | **Curated in 1.3** |
+| Studio panel extras (prefs, modules install/config, storage, score-bed, clips) | **Curated in 1.3** |
 | Alternate storyboard render doors (`/api/storyboard/render*`, finalize, animate-*, scatter, regen-shot) | **Deliberately uncurated** (cf#334 sound-door divergence). Reachable via `studio_request` only |
 | Host secret store UI (`/api/settings/secrets` if present) | Escape hatch / host-specific; not every host exposes it |
 | Control plane **admin** lifecycle (list tenants, upgrade, smoke, suspend, credits, holds, operators) | **Curated in 1.3** (`cp_*`) when `CONTROL_PLANE_*` configured |
@@ -38,7 +38,6 @@ Honest map of what a human can do in **vivijure-cf** / **vivijure-local** panels
 | Enhance / yaml / markers / analyze | corresponding POSTs | curated tools |
 | Module install/config | `/api/modules/install*`, config | curated tools |
 | Storage ledger | usage + reconcile | `storage_usage`, `storage_reconcile` |
-| Demo mode | `/api/demo/*` | `demo_*` |
 | Storyboard render / scatter / animate / finalize / regen | blocked doors | **`studio_request` only** (cf#334) |
 | Frames extract | `POST /api/render/frames` | `render_frames` |
 

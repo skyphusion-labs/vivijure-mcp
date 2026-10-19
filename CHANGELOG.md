@@ -4,7 +4,30 @@
 prefix is what the publish workflow matches on. The tag is the version of record. This file records
 the why behind each release. Newest first.
 
-## Unreleased
+## v2.0.0 -- 2026-10-19
+
+MAJOR, a removal: **the four demo tools are gone** (109 -> 105 tools, 13 -> 12 groups).
+
+- **feat(mcp)!: drop `demo_menu`, `demo_chat`, `demo_render`, `poll_demo_render` (mcp#69).**
+  Conrad ruled the public vivijure demo removed entirely on 2026-10-19 and the Cloudflare
+  resources behind it were deleted (D1, R2 bucket, both Worker scripts, AI Gateway, hostname);
+  `vivijure-cf` removes `/api/demo/*` in the same wave. The four tools pointed at routes that no
+  longer answer, so the PUBLISHED catalog was already broken for them: this is the fix, not the
+  regression. BREAKING because the catalog is this package's public interface and four documented
+  tools leave it, so an agent that calls one now gets an unknown-tool error instead of an HTTP
+  failure. Cut as MAJOR rather than MINOR on purpose: a caret range must NOT pull a tool removal
+  in silently. Catalog figures re-derived from the catalog, not hand-adjusted: 105 tools,
+  67 studio, 38 control plane, 12 documented groups.
+- **fix(mcp): refuse undeclared `submit_film` arguments (mcp#61).** `submit_film` calls
+  `rejectUndeclared` before build, so a misspelled field is an error instead of a silently
+  dropped key that renders something that looks successful. Other tools still drop undeclared
+  keys inside build (mcp#26).
+
+**REGISTRY NOTE.** npm `latest` was **1.3.0** when this was cut: the `v1.4.1` tag was pushed
+without the `vivijure-mcp-v` prefix the publish workflow matches on, and 1.4.0 was never tagged
+at all, so neither reached the registry. Their sections below stand as the git record, and 2.0.0
+is the first PUBLISHED release carrying the 1.4.x content. The mechanism that let a mistyped tag
+go unnoticed is mcp#70, not this release.
 
 - **feat(mcp): expose remaining audit route params (mcp#26).** Advertise fields the studio
   routes already honor: `bundle_storyboard.startImage` / `sceneStartImages` (reverse-bridge

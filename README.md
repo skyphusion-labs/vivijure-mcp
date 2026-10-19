@@ -11,9 +11,9 @@ Stateless Worker package that proxies **curated tools** to:
 | | |
 |--|--|
 | **npm** | [`@skyphusion-labs/vivijure-mcp`](https://www.npmjs.com/package/@skyphusion-labs/vivijure-mcp) |
-| **Version** | **1.4.1** (109 tools) -- trust `package.json` / tags |
+| **Version** | **2.0.0** (105 tools) -- trust `package.json` / tags |
 | **License** | AGPL-3.0-only |
-| **Product** | https://vivijure.com · demo https://demo.vivijure.com |
+| **Product** | https://vivijure.com |
 
 ## Documentation
 
@@ -99,7 +99,6 @@ Mint a **named studio consumer token** (`scripts/studio-consumer-token.sh mint s
 | Render (spend) | `bundle_storyboard`, `submit_film`, `poll_film`, clips, frames |
 | Bytes in / artifacts | `upload_image`, `upload_audio`, `view_artifact`, `artifact_url` |
 | Modules / prefs / storage | install modules, patch config, storage reconcile |
-| Demo | `demo_*` when host enables demo mode |
 | Control plane | `cp_list_tenants`, upgrade studio/modules, smoke, suspend, credits, holds, … |
 | Escape hatches | `studio_request`, `control_plane_request` |
 

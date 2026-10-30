@@ -4,6 +4,12 @@
 prefix is what the publish workflow matches on. The tag is the version of record. This file records
 the why behind each release. Newest first.
 
+## v2.1.0 -- 2026-10-30
+
+MINOR. One new tool, `retry_film_finish`, so the catalog goes from 105 tools to 106. No argument of an existing tool changes.
+
+- **feat(tools): say when a done film is not a clean finish, and add `retry_film_finish` (mcp#77).** `poll_film` now explains `finish_waiting`, `finish_incomplete` and `finish_retry_failed`, because a film at done with that list is missing steps even with a download URL. The new tool calls `POST /api/render/film/:id/finish-retry`. It answers 404 against a studio older than v1.41.0.
+
 ## v2.0.1 -- 2026-10-30
 
 PATCH. Tool text only, with no change to the catalog (105 tools) or to any tool's arguments.

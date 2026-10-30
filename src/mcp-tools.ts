@@ -973,7 +973,14 @@ export const TOOLS: McpTool[] = [
       "until phase is 'done' (a presigned download_url is then present, 6h TTL) or 'failed'. Phases: " +
       "keyframe, pre_clip_dialogue, pre_clip_speech, clips, dialogue, speech, finish, assemble, " +
       "master, mux, done, failed. pre_clip_dialogue and pre_clip_speech run between keyframe and " +
-      "clips only when the motion module declares usage.driving_audio and the film has dialogue lines.",
+      "clips only when the motion module declares usage.driving_audio and the film has dialogue lines. " +
+      "READ finish_waiting AND finish_incomplete, because phase alone does not tell you the film is whole. " +
+      "finish_waiting means the film is waiting and nothing has failed: position is its place in the " +
+      "finish queue (1 is next), so keep polling and report the position. finish_incomplete means finish " +
+      "steps did NOT run: phase 'done' with this list is NOT a clean finish, even though download_url is " +
+      "present. Each entry names the step and what is kept (for example, a film with no subtitles). " +
+      "Tell the user which steps are missing, and offer retry_film_finish. A clean finish has no such key. " +
+      "finish_retry_failed means the last retry did not finish and the film is unchanged; it can be retried again.",
     inputSchema: OBJ(
       { id: STR("film-* job id from submit_film. A leftover scatter-* id returns 410.") },
       ["id"],
@@ -981,6 +988,23 @@ export const TOOLS: McpTool[] = [
     build: (a) => ({
       method: "GET",
       path: `/api/render/film/${encodeURIComponent(reqStr(a, "id"))}`,
+    }),
+  },
+  {
+    name: "retry_film_finish",
+    description:
+      "POST /api/render/film/:id/finish-retry. Run again the finish steps a film names in " +
+      "finish_incomplete (from poll_film). No clip is re-rendered and no GPU clip spend is repeated, " +
+      "though a retried per-shot step such as upscale does call its door again. The film goes back to " +
+      "the end of the finish queue, and its phase moves off done, so poll_film again until it is done " +
+      "or failed. 409 means the film has nothing to retry, or is still running.",
+    inputSchema: OBJ(
+      { id: STR("film-* job id whose finish_incomplete is not empty.") },
+      ["id"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/render/film/${encodeURIComponent(reqStr(a, "id"))}/finish-retry`,
     }),
   },
 

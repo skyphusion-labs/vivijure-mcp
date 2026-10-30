@@ -11,7 +11,7 @@ Stateless Worker package that proxies **curated tools** to:
 | | |
 |--|--|
 | **npm** | [`@skyphusion-labs/vivijure-mcp`](https://www.npmjs.com/package/@skyphusion-labs/vivijure-mcp) |
-| **Version** | **2.0.1** (105 tools) -- trust `package.json` / tags |
+| **Version** | **2.1.0** (106 tools) -- trust `package.json` / tags |
 | **License** | AGPL-3.0-only |
 | **Product** | https://vivijure.com |
 

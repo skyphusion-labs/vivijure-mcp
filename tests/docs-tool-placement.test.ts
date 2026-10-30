@@ -57,7 +57,7 @@ const EXPECTED: [string, number][] = [
   ["Projects and the render library (write)", 6],
   ["Finishing a completed render", 2],
   ["Planning (LLM calls; costs inference, not GPU render time)", 11],
-  ["Render (SPENDS MONEY)", 6],
+  ["Render (SPENDS MONEY)", 7],
   ["Bytes in (bring your own image or audio)", 2],
   ["Artifacts (see what you made)", 2],
   ["Studio settings and modules (write)", 6],

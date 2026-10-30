@@ -176,7 +176,7 @@ curl -s https://studio-mcp.example.com/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-You should get a JSON-RPC result listing all 105 tools. The same request **without** the header must
+You should get a JSON-RPC result listing all 106 tools. The same request **without** the header must
 return `401` -- if it does not, stop and check your `MCP_TOKEN` seeding before wiring any client.
 
 Note the split: a missing or wrong `MCP_TOKEN` fails at the door (`401`), but a missing or wrong
@@ -243,7 +243,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-**105** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
+**106** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -640,6 +640,16 @@ presigned link to the finished film with a **6 hour TTL** (`FILM_DOWNLOAD_TTL_SE
 it before it expires (a later `poll_film` re-issues a fresh one). On
 `failed`, the payload carries the real per-shot error: the studio never silently ships an
 unfinished film.
+
+**`finish_waiting` and `finish_incomplete`: phase alone does not say the film is whole.**
+`finish_waiting` means the film is waiting and nothing has failed; `position` is its place in the finish
+queue, with 1 next. Keep polling. `finish_incomplete` means finish steps did not run: a film at `done` with
+this list is **not** a clean finish, even with a `download_url`. Each entry names the step and what is kept.
+Tell the user, and offer `retry_film_finish`. A clean finish has no such key.
+
+**`retry_film_finish`** -- `POST /api/render/film/:id/finish-retry`. Run again the steps a film names in
+`finish_incomplete`. No clip is re-rendered, and the film goes to the end of the finish queue, so poll again.
+- `id` (required): the `film-<...>` job id. 409 means nothing to retry, or the film is still running.
 
 ### Bytes in (bring your own image or audio)
 

@@ -645,7 +645,8 @@ unfinished film.
 `finish_waiting` means the film is waiting and nothing has failed; `position` is its place in the finish
 queue, with 1 next. Keep polling. `finish_incomplete` means finish steps did not run: a film at `done` with
 this list is **not** a clean finish, even with a `download_url`. Each entry names the step and what is kept.
-Tell the user, and offer `retry_film_finish`. A clean finish has no such key.
+Tell the user, and offer `retry_film_finish`. A clean finish has no such key. `finish_retry_failed` means the
+last retry did not finish and the film is unchanged; it can be retried again.
 
 **`retry_film_finish`** -- `POST /api/render/film/:id/finish-retry`. Run again the steps a film names in
 `finish_incomplete`. No clip is re-rendered, and the film goes to the end of the finish queue, so poll again.

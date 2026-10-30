@@ -979,7 +979,8 @@ export const TOOLS: McpTool[] = [
       "finish queue (1 is next), so keep polling and report the position. finish_incomplete means finish " +
       "steps did NOT run: phase 'done' with this list is NOT a clean finish, even though download_url is " +
       "present. Each entry names the step and what is kept (for example, a film with no subtitles). " +
-      "Tell the user which steps are missing, and offer retry_film_finish. A clean finish has no such key.",
+      "Tell the user which steps are missing, and offer retry_film_finish. A clean finish has no such key. " +
+      "finish_retry_failed means the last retry did not finish and the film is unchanged; it can be retried again.",
     inputSchema: OBJ(
       { id: STR("film-* job id from submit_film. A leftover scatter-* id returns 410.") },
       ["id"],

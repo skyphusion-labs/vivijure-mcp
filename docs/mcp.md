@@ -554,15 +554,18 @@ seconds on the render backend, or cloud i2v per-clip billing, depending on the m
 There is no undo; treat every call like clicking a "charge my account" button.
 - `bundle_key` (required): the `bundleKey` from `bundle_storyboard`.
 - `scenes` (required): non-empty array of `{ shot_id, prompt, seconds }`.
-- `project`: project namespace (derived from `bundle_key` when omitted).
+- `project`: project namespace. Omitted, the studio derives it from `bundle_key`. A caller
+  value that does not match the bundle key (`bundles/<slug>.tar.gz` or
+  `bundles/<slug>-<16hex>.tar.gz`) is remapped to `<slug>` before the job starts. A matching
+  value is kept. Do not send a mismatch.
 - `motion_backend` (required in practice): a `motion.backend` module name from `studio_modules`.
   A film is a full render, and a full render REQUIRES an explicit backend: an omitted or
   non-serving value is rejected at submit with a `400` listing the installed backend names
   (#500/#504) -- the studio never silently picks one for you.
-- `keyframe_backend`: a keyframe module name from `studio_modules` `hooks['keyframe']`. Unlike
-  `motion_backend`, the studio does NOT reject an omitted value at submit (#380) -- selection
-  falls through to the first serving keyframe module, which can be a non-operational door (e.g.
-  an unseeded local-GPU door). Pass it explicitly.
+- `keyframe_backend`: a keyframe module name from `studio_modules` `hooks['keyframe']`. Omitted,
+  the studio fills it by name with the installed module named `keyframe`, else `cloud-keyframe`.
+  When `motion_backend` is `local-gpu`, or neither name is installed, it stays unset and the
+  core picks. A name that is not installed fails the job.
 - `keyframe_config`: keyframe module config, e.g. `{ "quality_tier": "..." }` (tiers come from
   `studio_modules`).
 - `motion_config`: motion module config (knobs per that module's `config_schema`).
@@ -597,9 +600,9 @@ There is no undo; treat every call like clicking a "charge my account" button.
   the row records `"final"` regardless of what actually ran (#382). Does not change the actual
   render, which is still driven by `keyframe_config` / `motion_config` -- this only makes the
   history label honest.
-- `shard_count`: parallel shard count (alias `shardCount`). Omitted, the studio uses
-  `min(shots, 20)` so a 20-worker pool is used. `1` is a serial film (one job). `N` is clamped
-  to the shot count. Do not send null; omit the field to let the studio pick.
+- `shard_count`: alias `shardCount`. Accepted and ignored. Film scatter is retired, so a
+  submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage,
+  not a split-motion door. The tool omits the field when you do not pass it.
 
 **Voices, two paths (mcp#29):** (1) `dialogue_lines[].voice_id` for voice alone -- works with no
 LoRA; this is the default path for speech. (2) `cast_loras` for identity LoRA **and** voice
@@ -624,14 +627,17 @@ films).
 
 **`poll_film`** -- `GET /api/render/film/:id`. Advance and poll a film job **one tick**. The
 pipeline moves when you poll, so poll steadily (every 10 to 30 seconds is plenty) until it settles.
-- `id` (required): the `film-<...>` or `scatter-<...>` job id from `submit_film`. Same poll path
-  for both; a scatter job also returns `film_id`.
+- `id` (required): the `film-<...>` job id from `submit_film`. A leftover `scatter-*` id
+  returns 410. Film scatter is retired; a submit is always one `film-*` job. An unknown id
+  is 404.
 
-Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Serial phases, in order:
-`keyframe`, `clips`, `dialogue`, `speech`, `finish`, `assemble`, `master`, `mux`, then terminally
-`done` or `failed`. A scattered film can report `shards`, `gather`, `mux`, `finishing`, then
-`done` or `failed`. On `done`, `download_url` is a presigned link to the finished film with a
-**6 hour TTL** (`FILM_DOWNLOAD_TTL_SECONDS`); download it before it expires (a later `poll_film` re-issues a fresh one). On
+Returns `{ phase, clips?, finish?, film_key?, download_url? }`. Phases: `keyframe`,
+`pre_clip_dialogue`, `pre_clip_speech`, `clips`, `dialogue`, `speech`, `finish`, `assemble`,
+`master`, `mux`, then terminally `done` or `failed`. `pre_clip_dialogue` and
+`pre_clip_speech` run between `keyframe` and `clips` only when the chosen motion module
+declares `usage.driving_audio` and the film has dialogue lines. On `done`, `download_url` is a
+presigned link to the finished film with a **6 hour TTL** (`FILM_DOWNLOAD_TTL_SECONDS`); download
+it before it expires (a later `poll_film` re-issues a fresh one). On
 `failed`, the payload carries the real per-shot error: the studio never silently ships an
 unfinished film.
 

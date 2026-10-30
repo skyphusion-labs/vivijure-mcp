@@ -864,18 +864,21 @@ export const TOOLS: McpTool[] = [
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
       "qualityTier?, shard_count?, finish_select?, idempotency_key? }. " +
-      "Each *_config is { [moduleName]: config }, feeding one hook stage: finish_config -> the per-shot " +
-      "finish chain, speech_config -> the speech (dialogue-audio) chain, film_finish_config -> the " +
-      "film.finish chain on the assembled film (this is where SUBTITLE mode burn/sidecar/both and the " +
-      "film-titles knobs live; putting subtitle config in finish_config silently no-ops to burn), " +
-      "master_config -> the master (audio bed) chain. Returns { film_id, phase }. Then POLL poll_film until phase is " +
-      "done/failed. Set motion_backend and keyframe_backend explicitly (names from studio_modules " +
-      "hooks['motion.backend'] / hooks['keyframe']); an omitted backend can pick a non-operational " +
-      "door (#380). qualityTier (draft/standard/final, also in studio_modules render.quality_tiers) " +
-      "labels the render-history row with what was requested; omitted, the row records \"final\" " +
-      "regardless of what actually ran (#382) -- it does not change what renders. shard_count (alias " +
-      "shardCount): omitted, the studio uses min(shots, 20) so a 20-worker pool is used; 1 = one " +
-      "serial job; N is clamped to the shot count. finish_select is the cf#386 omit rule: omit it and " +
+      "keyframe_config and motion_config are flat knob maps for the chosen module. The nested maps " +
+      "are { [moduleName]: config }: finish_config -> the per-shot finish chain, speech_config -> the " +
+      "speech (dialogue-audio) chain, film_finish_config -> the film.finish chain on the assembled " +
+      "film (this is where SUBTITLE mode burn/sidecar/both and the film-titles knobs live; putting " +
+      "subtitle config in finish_config silently no-ops to burn), master_config -> the master (audio " +
+      "bed) chain. Returns { film_id, phase }. Then POLL " +
+      "poll_film until phase is done/failed. motion_backend names a motion.backend module " +
+      "(studio_modules). An omitted or non-serving value is rejected 400 listing the installed names " +
+      "(#504). keyframe_backend, omitted, is filled by name with the installed module named keyframe, " +
+      "else cloud-keyframe; when motion_backend is local-gpu, or neither name is installed, it stays " +
+      "unset and the core picks. qualityTier (draft/standard/final, also in studio_modules " +
+      "render.quality_tiers) labels the render-history row with what was requested; omitted, the row " +
+      "records \"final\" regardless of what actually ran (#382) -- it does not change what renders. " +
+      "shard_count (alias shardCount) is accepted and ignored: film scatter is retired, so a submit " +
+      "is always one film-* job. finish_select is the cf#386 omit rule: omit it and " +
       "finish_config for no finish, or pass { mode: \"default\" } for the participation set. " +
       "idempotency_key (alias idempotencyKey) is the client retry key (cf#528). VOICES (two paths, mcp#29): " +
       "(1) dialogue_lines[].voice_id (a name from the voices tool) is the voice-only path -- no " +
@@ -889,12 +892,20 @@ export const TOOLS: McpTool[] = [
       {
         bundle_key: STR("The bundleKey from bundle_storyboard."),
         scenes: ARR("[{ shot_id, prompt, seconds }] -- non-empty."),
-        project: STR("Project namespace (derived from bundle_key if omitted)."),
-        motion_backend: STR("A motion.backend module name (from studio_modules)."),
+        project: STR(
+          "Project namespace. Omitted, the studio derives it from bundle_key. A caller value that " +
+          "does not match the bundle key (bundles/<slug>.tar.gz or bundles/<slug>-<16hex>.tar.gz) " +
+          "is remapped to <slug> before the job starts. A matching value is kept. Do not send a mismatch.",
+        ),
+        motion_backend: STR(
+          "A motion.backend module name (from studio_modules). Omitted or not serving: the studio " +
+          "rejects the submit with 400 and lists the installed names (#504).",
+        ),
         keyframe_backend: STR(
-          "A keyframe module name (from studio_modules hooks['keyframe']). Omitted, selection " +
-          "falls to the first serving module for that hook, which can be a non-operational door " +
-          "(#380).",
+          "A keyframe module name (from studio_modules hooks['keyframe']). Omitted, the studio fills " +
+          "it by name with the installed module named keyframe, else cloud-keyframe. When " +
+          "motion_backend is local-gpu, or neither name is installed, it stays unset and the core " +
+          "picks. A name that is not installed fails the job.",
         ),
         keyframe_config: { type: "object", description: "Keyframe module config (e.g. { quality_tier })." },
         motion_config: { type: "object", description: "Motion module config." },
@@ -927,10 +938,12 @@ export const TOOLS: McpTool[] = [
           "is driven by keyframe_config / motion_config.",
         ),
         shard_count: NUM(
-          "Parallel film shard count. Omitted, the studio uses min(shots, 20) so a 20-worker " +
-          "pool is used. 1 = one serial job. N is clamped to the shot count.",
+          "Accepted and ignored. Film scatter is retired, so a submit is always one film-* job. " +
+          "Alias shardCount. Keyframe parallelism is a single-film keyframe stage, not a split-motion door.",
         ),
-        shardCount: NUM("Alias of shard_count. The studio accepts either name."),
+        shardCount: NUM(
+          "Alias of shard_count. The studio accepts either name and ignores both.",
+        ),
         finish_select: {
           type: "object",
           description:
@@ -954,13 +967,15 @@ export const TOOLS: McpTool[] = [
   {
     name: "poll_film",
     description:
-      "GET /api/render/film/:id. Advance + poll a film job one tick. id may be film-* or scatter-* " +
-      "(same poll path). Returns { phase, clips?, finish?, film_key?, download_url?, film_id? }. Call " +
-      "repeatedly until phase is 'done' (a presigned download_url is then present, 6h TTL) or 'failed'. " +
-      "Serial phases: keyframe, clips, dialogue, speech, finish, assemble, master, mux, done, failed. " +
-      "A scattered film can report shards, gather, mux, finishing, done, failed.",
+      "GET /api/render/film/:id. Advance + poll a film job one tick. id is the film-* job id from " +
+      "submit_film. A leftover scatter-* id returns 410 (film scatter is retired). An unknown id is " +
+      "404. Returns { phase, clips?, finish?, film_key?, download_url?, film_id? }. Call repeatedly " +
+      "until phase is 'done' (a presigned download_url is then present, 6h TTL) or 'failed'. Phases: " +
+      "keyframe, pre_clip_dialogue, pre_clip_speech, clips, dialogue, speech, finish, assemble, " +
+      "master, mux, done, failed. pre_clip_dialogue and pre_clip_speech run between keyframe and " +
+      "clips only when the motion module declares usage.driving_audio and the film has dialogue lines.",
     inputSchema: OBJ(
-      { id: STR("film-* or scatter-* job id from submit_film. Same GET /api/render/film/:id path.") },
+      { id: STR("film-* job id from submit_film. A leftover scatter-* id returns 410.") },
       ["id"],
     ),
     build: (a) => ({

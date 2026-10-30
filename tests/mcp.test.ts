@@ -545,6 +545,48 @@ describe("vivijure MCP tool dispatch", () => {
     expect(lineDesc).toMatch(/Do not also pass that member in cast_loras/i);
   });
 
+  it("film tool descriptions follow the retired-scatter contract", async () => {
+    // CONTRACT 2.20 / 2.21 / 2.23: a submit is one film-* job, shard_count is ignored,
+    // and a leftover scatter-* poll is 410. The old min(shots, 20) and shards/gather text
+    // taught the retired door.
+    const res = await worker.fetch(
+      mcpRequest({ jsonrpc: "2.0", id: 74, method: "tools/list" }, AUTH),
+      ENV,
+    );
+    const body = (await res.json()) as {
+      result: {
+        tools: {
+          name: string;
+          description: string;
+          inputSchema: { properties: Record<string, { description?: string }> };
+        }[];
+      };
+    };
+    const submit = body.result.tools.find((t) => t.name === "submit_film");
+    const poll = body.result.tools.find((t) => t.name === "poll_film");
+    expect(submit, "submit_film missing from tools/list").toBeDefined();
+    expect(poll, "poll_film missing from tools/list").toBeDefined();
+    const desc = submit!.description;
+    const props = submit!.inputSchema.properties;
+    expect(desc).not.toMatch(/min\(shots,\s*20\)/);
+    expect(desc).toMatch(/accepted and ignored/);
+    expect(desc).toMatch(/one film-\* job/);
+    expect(desc).toMatch(/flat knob maps/);
+    expect(desc).not.toMatch(/first serving/);
+    expect(desc).toMatch(/rejected 400/);
+    expect(props.shard_count?.description ?? "").not.toMatch(/min\(shots/);
+    expect(props.shard_count?.description ?? "").toMatch(/ignored/);
+    expect(props.shardCount?.description ?? "").toMatch(/ignores both/);
+    expect(props.project?.description ?? "").toMatch(/remapped to <slug>/);
+    expect(props.keyframe_backend?.description ?? "").not.toMatch(/first serving/);
+    expect(props.keyframe_backend?.description ?? "").toMatch(/cloud-keyframe/);
+    expect(poll!.description).not.toMatch(/shards, gather/);
+    expect(poll!.description).toMatch(/410/);
+    expect(poll!.description).toMatch(/pre_clip_dialogue/);
+    expect(poll!.inputSchema.properties.id?.description ?? "").not.toMatch(/film-\* or scatter-\*/);
+    expect(poll!.inputSchema.properties.id?.description ?? "").toMatch(/410/);
+  });
+
   it("bad arguments return an isError result and never call the studio", async () => {
     const res = await worker.fetch(
       mcpRequest(

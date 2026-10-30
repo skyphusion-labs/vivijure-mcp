@@ -4,6 +4,17 @@
 prefix is what the publish workflow matches on. The tag is the version of record. This file records
 the why behind each release. Newest first.
 
+## v2.0.1 -- 2026-10-30
+
+PATCH. Tool text only, with no change to the catalog (105 tools) or to any tool's arguments.
+
+- **docs(mcp): align film tool text with the retired scatter contract (mcp#75).** `submit_film` said
+  an omitted `shard_count` means min(shots, 20) and that an omitted backend picks a door. `poll_film`
+  called `scatter-*` ids valid and listed shards and gather as phases. The studio contract says
+  scatter is retired, a submit is one `film-*` job, `shard_count` is accepted and ignored, and a
+  leftover `scatter-*` poll is 410.
+- **deps:** `@types/node`, the vitest toolchain, and `source-map-js`.
+
 ## v2.0.0 -- 2026-10-19
 
 MAJOR, a removal: **the four demo tools are gone** (109 -> 105 tools, 13 -> 12 groups).

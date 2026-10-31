@@ -23,4 +23,20 @@ describe("wire names match the studio route", () => {
     const call = t.build({ key: "renders/f/film.mp4", count: 1, at: 4.5 });
     expect(call.body).toEqual({ key: "renders/f/film.mp4", count: 1, at: 4.5 });
   });
+
+  it("submit_clips publishes and forwards shots, the only list the route reads", () => {
+    const t = tool("submit_clips");
+    const schema = t.inputSchema as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(schema.properties).sort()).toEqual(["config", "motion_backend", "project", "shots"]);
+    expect(schema.required).toEqual(["shots"]);
+    const shots = [{ shot_id: "shot_01", keyframe_url: "https://x/k.png", prompt: "p", seconds: 6 }];
+    const call = t.build({ project: "p", motion_backend: "minimax-hailuo", shots });
+    expect(call.path).toBe("/api/render/clips");
+    expect(call.body).toEqual({ project: "p", motion_backend: "minimax-hailuo", shots });
+  });
+
+  it("submit_clips refuses an empty or missing shot list before it spends", () => {
+    expect(() => tool("submit_clips").build({})).toThrow("shots");
+    expect(() => tool("submit_clips").build({ shots: [] })).toThrow("shots");
+  });
 });

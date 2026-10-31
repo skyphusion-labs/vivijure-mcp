@@ -1384,19 +1384,23 @@ export const TOOLS: McpTool[] = [
   {
     name: "submit_clips",
     description:
-      "POST /api/render/clips. Start a clips-only render (SPENDS). Poll with poll_clips. " +
-      "Prefer submit_film for full films; this is the clips sub-pipeline.",
+      "POST /api/render/clips. Start a clips-only render from keyframes you already have (SPENDS). " +
+      "Poll with poll_clips. No keyframe, assemble or finish stage runs. Prefer submit_film for full films.",
     inputSchema: OBJ(
       {
-        bundle_key: STR("Bundle key from bundle_storyboard."),
-        scenes: ARR("[{ shot_id, prompt, seconds }]"),
+        project: STR("Project namespace for the clips. Default 'clips'."),
+        shots: ARR(
+          "[{ shot_id, keyframe_url, keyframe_key?, prompt, seconds, motion_backend? }]. keyframe_url is a " +
+            "presigned link the provider can fetch (see artifact_url); keep its lifetime longer than the job.",
+        ),
+        motion_backend: STR("A motion.backend module name (from studio_modules). A shot's own value wins."),
+        config: { type: "object", description: "Motion module config." },
       },
-      ["bundle_key", "scenes"],
+      ["shots"],
     ),
     build: (a) => {
-      reqStr(a, "bundle_key");
-      if (!Array.isArray(a.scenes) || a.scenes.length === 0) {
-        throw new Error("missing required argument 'scenes' (non-empty array)");
+      if (!Array.isArray(a.shots) || a.shots.length === 0) {
+        throw new Error("missing required argument 'shots' (non-empty array)");
       }
       return { method: "POST", path: "/api/render/clips", body: bodyWithout(a) };
     },

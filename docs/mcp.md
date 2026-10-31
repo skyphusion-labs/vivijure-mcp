@@ -615,9 +615,9 @@ set `voice_id` on the line instead.
 
 Returns `{ film_id, phase }`. Nothing renders any further unless you poll.
 
-**`submit_clips`** -- `POST /api/render/clips`. Clips-only spend path (prefer `submit_film` for full
-films).
-- `bundle_key`, `scenes` (required).
+**`submit_clips`** -- `POST /api/render/clips`. Clips-only spend path from keyframes you already have (prefer `submit_film` for full films). No keyframe, assemble or finish stage runs.
+- `shots` (required): `[{ shot_id, keyframe_url, keyframe_key?, prompt, seconds, motion_backend? }]`. `keyframe_url` is a presigned link the provider can fetch (see `artifact_url`).
+- Optional `project` (default `clips`), `motion_backend`, `config`.
 
 **`poll_clips`** -- `GET /api/render/clips/:id`. Poll clips job.
 - `id` (required).

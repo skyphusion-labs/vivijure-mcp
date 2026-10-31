@@ -511,8 +511,8 @@ Additional planning / media helpers (inference or free CPU unless noted):
 
 **`storyboard_markers`** -- `POST /api/storyboard/markers`. Derive markers from storyboard / analysis.
 
-**`audio_analyze`** -- `POST /api/audio/analyze`. Analyze a staged audio key (from `upload_audio`).
-- `key` (required).
+**`audio_analyze`** -- `POST /api/audio/analyze`. Analyze a staged audio key (from `upload_audio`). A film with `audio_key` is refused until this has run on that key.
+- `key` (required). Sent to the studio as `audioKey`.
 
 **`render_plan`** -- `POST /api/storyboard/render-plan`. Build a plan without starting a spend render.
 - `storyboard` (required).
@@ -622,8 +622,8 @@ films).
 **`poll_clips`** -- `GET /api/render/clips/:id`. Poll clips job.
 - `id` (required).
 
-**`render_frames`** -- `POST /api/render/frames`. Extract stills from a video artifact.
-- `key` (required); optional `times`.
+**`render_frames`** -- `POST /api/render/frames`. Sample frames from a video artifact into one contact sheet, and return its key.
+- `key` (required); optional `count` (1-25, default 9) and `at` (seconds, honored only when `count` is 1).
 
 **`poll_film`** -- `GET /api/render/film/:id`. Advance and poll a film job **one tick**. The
 pipeline moves when you poll, so poll steadily (every 10 to 30 seconds is plenty) until it settles.

@@ -1352,15 +1352,18 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "audio_analyze",
-    description: "POST /api/audio/analyze. Analyze a staged audio key for beats/markers.",
+    description:
+      "POST /api/audio/analyze. Analyze a staged audio key for beats/markers. A film with `audio_key` " +
+      "is refused until this has run on that key.",
     inputSchema: OBJ(
       { key: STR("Audio artifact key (from upload_audio).") },
       ["key"],
     ),
+    // The route reads `audioKey`. The tool keeps `key`, so the wire name is set here.
     build: (a) => ({
       method: "POST",
       path: "/api/audio/analyze",
-      body: bodyWithout(a),
+      body: { audioKey: a.key },
     }),
   },
   {
@@ -1410,11 +1413,13 @@ export const TOOLS: McpTool[] = [
   {
     name: "render_frames",
     description:
-      "POST /api/render/frames. Extract still frames from a render artifact (panel frame picker).",
+      "POST /api/render/frames. Sample frames from a render artifact into one contact sheet. Returns " +
+      "the sheet's key (see view_artifact).",
     inputSchema: OBJ(
       {
         key: STR("Video artifact key."),
-        times: ARR("Optional timestamps."),
+        count: NUM("Samples. Clamped to 1-25, default 9 (a 3x3 sheet)."),
+        at: NUM("Seconds. Honored only when count is 1. Default is the midpoint."),
       },
       ["key"],
     ),

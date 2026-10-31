@@ -82,7 +82,7 @@ describe("studio 1.3 gap tools", () => {
     expect(call("train_cast_wan_lora", { id: "c1" }).path).toBe(
       "/api/cast/c1/train-wan-lora",
     );
-    expect(call("submit_clips", { bundle_key: "b", scenes: [{ shot_id: "1" }] }).path).toBe(
+    expect(call("submit_clips", { shots: [{ shot_id: "1" }] }).path).toBe(
       "/api/render/clips",
     );
     expect(call("install_module", { script_name: "mod-a" }).body).toEqual({

@@ -460,7 +460,10 @@ broken.**
 **`plan_storyboard`** -- `POST /api/storyboard/plan`. Plan a storyboard from a brief with an LLM.
 - `brief` (required): the film brief / prompt to plan from.
 - `model` (required): a planning model id from `storyboard_models`.
-- `characters`: optional character definitions to plan around.
+- `characters`: optional cast to plan around. Each entry is `{ slot, name, bible }`, all three
+  required: `slot` is one of `A`, `B`, `C`, `D` and appears once, `name` is a non-empty string, and
+  `bible` is a string (a short look description; may be empty). The studio refuses any other shape
+  with `400` naming the bad fields (vivijure-cf#1137).
 - `beatBlock`: optional beat-structure block.
 
 Returns a validated storyboard on `200`; a plan the validator rejects comes back as `422` with the

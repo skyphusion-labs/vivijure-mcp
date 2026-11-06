@@ -692,13 +692,31 @@ export const TOOLS: McpTool[] = [
     name: "plan_storyboard",
     description:
       "POST /api/storyboard/plan. Plan a storyboard from a brief with an LLM. Body: { brief (req), " +
-      "model (req), characters?, beatBlock? }. Returns a validated storyboard (200) or the model " +
-      "errors (422). Use `storyboard_models` for valid model ids.",
+      "model (req), characters?, beatBlock? }. Each characters entry is { slot, name, bible }: slot " +
+      "is one of A, B, C, D and used once, name is a non-empty string, bible is a string (a short " +
+      "look description; may be empty). Any other entry shape is refused with 400 naming the bad " +
+      "fields (vivijure-cf#1137). Returns a validated storyboard (200) or the model errors (422). " +
+      "Use `storyboard_models` for valid model ids.",
     inputSchema: OBJ(
       {
         brief: STR("The film brief / prompt to plan from."),
         model: STR("Planning model id (see storyboard_models)."),
-        characters: ARR("Optional character definitions."),
+        characters: {
+          type: "array",
+          description:
+            "Optional cast to plan around (mcp#85). Each entry is { slot, name, bible }, all three " +
+            "required: slot is one of A, B, C, D and appears once; name is a non-empty string; bible " +
+            "is a string, a short look description, and may be empty. Omit the field for no cast.",
+          items: {
+            type: "object",
+            properties: {
+              slot: { type: "string", enum: ["A", "B", "C", "D"], description: "Cast slot id, used once." },
+              name: STR("The character's name. Non-empty."),
+              bible: STR("A short look description. May be empty."),
+            },
+            required: ["slot", "name", "bible"],
+          },
+        },
         beatBlock: STR("Optional beat structure block."),
       },
       ["brief", "model"],

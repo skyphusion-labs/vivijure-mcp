@@ -187,6 +187,36 @@ describe("vivijure MCP tool dispatch", () => {
     expect(body.result.content[0].text).toContain("film-abc");
   });
 
+  it("submit_film declares and forwards projectId, and surfaces the project answer (mcp#83)", async () => {
+    stubFetch({ ok: true, film_id: "film-p1", phase: "keyframe", project: { saved: true, id: "proj-1", name: "Harbor", created: false } }, 201);
+    const res = await worker.fetch(
+      mcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 12,
+          method: "tools/call",
+          params: {
+            name: "submit_film",
+            arguments: {
+              bundle_key: "bundles/x.tar",
+              scenes: [{ shot_id: "s1", prompt: "a wide shot", seconds: 4 }],
+              motion_backend: "own-gpu",
+              projectId: "proj-1",
+            },
+          },
+        },
+        AUTH,
+      ),
+      ENV,
+    );
+    const body = (await res.json()) as { result: { isError: boolean; content: { text: string }[] } };
+    // Before mcp#83 the undeclared-field gate refused this call outright.
+    expect(body.result.isError).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0].init.body as string).projectId).toBe("proj-1");
+    expect(body.result.content[0].text).toContain("proj-1");
+  });
+
   it("submit_film forwards the four module-config maps verbatim in the body (#674)", async () => {
     const finish_config = { upscale: { model: "realesr-animevideov3" } };
     const speech_config = { "audio-upscale": { denoise: true } };

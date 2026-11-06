@@ -863,13 +863,16 @@ export const TOOLS: McpTool[] = [
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
-      "qualityTier?, shard_count?, finish_select?, idempotency_key? }. " +
+      "qualityTier?, shard_count?, finish_select?, idempotency_key?, projectId? }. " +
       "keyframe_config and motion_config are flat knob maps for the chosen module. The nested maps " +
       "are { [moduleName]: config }: finish_config -> the per-shot finish chain, speech_config -> the " +
       "speech (dialogue-audio) chain, film_finish_config -> the film.finish chain on the assembled " +
       "film (this is where SUBTITLE mode burn/sidecar/both and the film-titles knobs live; putting " +
       "subtitle config in finish_config silently no-ops to burn), master_config -> the master (audio " +
-      "bed) chain. Returns { film_id, phase }. Then POLL " +
+      "bed) chain. Returns { film_id, phase, project? }. project is the storyboard project the studio " +
+      "saved this film's board to, so the panel can reopen it: { saved: true, id, name, created }, or " +
+      "{ saved: false, error } for a bundle made before boards were kept (the film still starts). " +
+      "projectId names that project; omitted, the studio picks or makes one from the board's name. Then POLL " +
       "poll_film until phase is done/failed. motion_backend names a motion.backend module " +
       "(studio_modules). An omitted or non-serving value is rejected 400 listing the installed names " +
       "(#504). keyframe_backend, omitted, is filled by name with the installed module named keyframe, " +
@@ -953,6 +956,11 @@ export const TOOLS: McpTool[] = [
           "Client retry key for POST /api/render/film (cf#528). A non-blank string replaces the 60s natural-key backstop. A blank or non-string is absence.",
         ),
         idempotencyKey: STR("Alias of idempotency_key. The studio reads either name."),
+        projectId: STR(
+          "A storyboard project's id (from list_projects or create_project). The studio saves this film's " +
+          "board there and links the render to it. Omitted, the studio picks or makes a project from the " +
+          "board's name, and never overwrites a project that holds a different board.",
+        ),
       },
       ["bundle_key", "scenes"],
     ),

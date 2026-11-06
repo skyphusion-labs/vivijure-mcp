@@ -558,6 +558,12 @@ There is no undo; treat every call like clicking a "charge my account" button.
   value that does not match the bundle key (`bundles/<slug>.tar.gz` or
   `bundles/<slug>-<16hex>.tar.gz`) is remapped to `<slug>` before the job starts. A matching
   value is kept. Do not send a mismatch.
+- `projectId` (mcp#83): a storyboard project's id (from `list_projects` or `create_project`). The
+  studio saves the film's board there, so the panel can reopen it, and links the render to it.
+  Omitted, the studio picks or makes a project from the board's name, and never overwrites a project
+  holding a different board. The answer carries `project`: `{ saved: true, id, name, created }`, or
+  `{ saved: false, error }` for a bundle made before the studio kept boards (the film still starts).
+  An older studio ignores the field.
 - `motion_backend` (required in practice): a `motion.backend` module name from `studio_modules`.
   A film is a full render, and a full render REQUIRES an explicit backend: an omitted or
   non-serving value is rejected at submit with a `400` listing the installed backend names

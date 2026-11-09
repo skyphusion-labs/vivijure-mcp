@@ -81,11 +81,12 @@ imports the package.
 
 ## Crew + identity
 
-Crew: `sudo -u <member> bash -lc '...'`; commits under `skyphusion-<member>`. Conrad on laptop only
-as `Conrad Rockenhaus <conrad@skyphusion.org>`. Conventional Commits; SemVer on the package 1.x line.
+Crew: `sudo -n -H -u <member> bash -lc '...'`; commits under `skyphusion-<member>`. Conrad on laptop only
+as `Conrad Rockenhaus <conrad@skyphusion.org>`. Conventional Commits. The package is on the 2.x line (`package.json` is 2.1.0).
 
 ## Release / deploy
 
-**Tag-gated production deploy.** Merges to `main` run CI only; they do not ship production.
-Cut an annotated SemVer tag on `main` to release (`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`).
-Deploy workflows assert the tag commit is an ancestor of `origin/main`.
+**npm publish is `vivijure-mcp-v*` or a manual `workflow_dispatch`** (`.github/workflows/publish-npm.yml`).
+A tag must match `package.json`. The workflow fetches `origin/main` and refuses a commit that is not
+on it. A plain `v*` tag does not publish this package. Merges to `main` run CI only. The Worker that
+imports the package is deployed by the host, not by this workflow.

@@ -52,7 +52,8 @@ npm run build           # tsc -p tsconfig.build.json -> dist/
 ## Deploy model
 
 1. **npm publish** on tag `vivijure-mcp-v*` (see `.github/workflows/publish-npm.yml`). Tag must match
-   `package.json` and be an ancestor of `main`.
+   `package.json` and be an ancestor of `main`; an org admin creates it on the release PR's merge
+   commit (see "Release / deploy").
 2. **Worker deploy** is host-side: pin the published package, set `main` to
    `node_modules/@skyphusion-labs/vivijure-mcp/dist/mcp.js`, secrets `MCP_TOKEN` + `STUDIO_API_TOKEN`,
    var `STUDIO_URL`. Host CI may deploy MCP on studio `v*` when `MCP_HOST` / `MCP_STUDIO_URL` are set.
@@ -86,7 +87,25 @@ as `Conrad Rockenhaus <conrad@skyphusion.org>`. Conventional Commits. The packag
 
 ## Release / deploy
 
+A release is a PR that bumps `package.json` and the CHANGELOG, merged through the normal gate; no
+direct push to `main`. Then an org admin (the lead or Conrad; crew cannot create release tags)
+tags that PR's MERGE COMMIT:
+
+```bash
+sha="$(gh pr view <release-pr> --json mergeCommit -q .mergeCommit.oid)"
+git tag -a vivijure-mcp-vX.Y.Z -m "vivijure-mcp vX.Y.Z" "$sha"
+git push origin vivijure-mcp-vX.Y.Z
+```
+
 **npm publish is `vivijure-mcp-v*` or a manual `workflow_dispatch`** (`.github/workflows/publish-npm.yml`).
 A tag must match `package.json`. The workflow fetches `origin/main` and refuses a commit that is not
 on it. A plain `v*` tag does not publish this package. Merges to `main` run CI only. The Worker that
 imports the package is deployed by the host, not by this workflow.
+
+## Release convention (bump-at-release)
+
+One convention for every skyphusion-labs repo (Conrad, ruled 2026-11-10, fleet-chezmoi#1766). A version moves ONLY in a release PR: bump the version, then assemble the changelog. Feature and fix PRs do not bump. Releases go through a PR (fleet-chezmoi#1622) and the tag goes on that PR's merge commit.
+
+- Version of record here: package.json (and package-lock.json).
+- Tag shape: `vivijure-mcp-v*`.
+- Check before a release PR: does a tag already exist for the version currently in the manifest? Yes means the cycle is closed, so the release PR bumps. No means a bump already landed outside a release PR; stop and read why before bumping again.

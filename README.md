@@ -11,7 +11,7 @@ Stateless Worker package that proxies **curated tools** to:
 | | |
 |--|--|
 | **npm** | [`@skyphusion-labs/vivijure-mcp`](https://www.npmjs.com/package/@skyphusion-labs/vivijure-mcp) |
-| **Version** | **2.1.0** (106 tools) -- trust `package.json` / tags |
+| **Version** | trust `package.json` / tags; count tools from `src/mcp-tools.ts` (`TOOLS.length`) |
 | **License** | AGPL-3.0-only |
 | **Product** | https://vivijure.dev |
 
@@ -25,7 +25,7 @@ Stateless Worker package that proxies **curated tools** to:
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 | [CLAUDE.md](CLAUDE.md) | Repo working notes for agents |
 
-Studio wire contract lives in the **host** repo: `vivijure-cf` / `vivijure-local` `docs/CONTRACT.md`.
+Studio wire contract lives in the **host** repo: [`vivijure-cf` `docs/CONTRACT.md`](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/CONTRACT.md).
 
 ## Architecture
 
@@ -71,7 +71,7 @@ wrangler secret put MCP_TOKEN -c wrangler.mcp.toml
 # wrangler secret put CONTROL_PLANE_ADMIN_TOKEN -c wrangler.mcp.toml
 ```
 
-Mint a **named studio consumer token** (`scripts/studio-consumer-token.sh mint studio-mcp`) rather than reusing the operator token. Full steps: [docs/mcp.md](docs/mcp.md).
+Mint a **named studio consumer token** (on vivijure-cf: `scripts/studio-consumer-token.sh mint studio-mcp`) rather than reusing the operator token. Full steps: [docs/mcp.md](docs/mcp.md).
 
 ### Agent config (after deploy)
 
@@ -90,7 +90,7 @@ Mint a **named studio consumer token** (`scripts/studio-consumer-token.sh mint s
 
 (Exact client field names vary; Streamable-HTTP `POST /mcp` with Bearer is the gate.)
 
-## Tool groups (1.3)
+## Tool groups
 
 | Group | Examples |
 |-------|----------|

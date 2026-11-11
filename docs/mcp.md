@@ -55,22 +55,22 @@ flowchart LR
 
 You need:
 
-1. **A deployed studio** reachable over HTTPS (see [DEPLOYMENT.md](DEPLOYMENT.md) or
-   [quickstart.md](quickstart.md)), running in token mode (`AUTH_MODE=token`, the default).
+1. **A deployed studio** reachable over HTTPS (see [DEPLOYMENT.md](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/DEPLOYMENT.md) or
+   [quickstart.md](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/quickstart.md)), running in token mode (`AUTH_MODE=token`, the default).
 2. **A studio API token for the MCP to use.** Best practice is a **named consumer token**, not the
    operator token, per the per-function-keys rule: if it ever leaks you revoke one consumer, and
    MCP-driven requests show up in observability as `api-token:studio-mcp` instead of blending into
    operator traffic. Mint one on the studio side:
 
    ```sh
-   scripts/studio-consumer-token.sh mint studio-mcp
+   scripts/studio-consumer-token.sh mint studio-mcp   # in your vivijure-cf checkout
    ```
 
    This inserts only the token's SHA-256 hash into the studio's D1 `api_tokens` table and writes the
    plaintext to a local `chmod 600` file exactly once. That value is what you will seed as the MCP
    Worker's `STUDIO_API_TOKEN` secret in the next section (the secret NAME on the MCP Worker is
    always `STUDIO_API_TOKEN`, whatever class of studio token you put in it). Reusing the operator
-   token works too; it is just worse hygiene. Details: [SECURITY.md](SECURITY.md) section 1b.
+   token works too; it is just worse hygiene. Details: [SECURITY.md](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/SECURITY.md) section 1b.
 3. **A custom domain** for the MCP host (for example `studio-mcp.example.com`) on the same
    Cloudflare zone. `workers.dev` is deliberately disabled in the example config.
 4. `wrangler` authenticated against your Cloudflare account (the same setup the studio deploy uses).
@@ -124,7 +124,7 @@ an empty value (the Worker then falls back to `MCP_TOKEN` alone). Revoking `MCP_
 still a `wrangler secret put MCP_TOKEN`. With NO gate token anywhere -- neither secret set, or both
 empty once blank entries are dropped -- the Worker refuses every request; it never opens up.
 
-**The CI path (this repo's tag-gated deploy):** the MCP deploys as the last step of a `v*` tag
+**The CI path (the host repo's tag-gated deploy, in vivijure-cf):** the MCP deploys as the last step of a `v*` tag
 deploy ONLY when both `MCP_HOST` and `MCP_STUDIO_URL` repo **variables** are set; when they are not,
 the step is a clean no-op, so a fork that never opts in never deploys it. The two secrets are never
 set in CI; seed them once with steps 3 and 4 above and they survive redeploys.
@@ -218,7 +218,7 @@ accepted with `202` and no body.
 Rules that hold for every tool, so the reference below does not repeat them:
 
 - **One tool call = one studio HTTP request.** Each curated tool maps to exactly one route in
-  [CONTRACT.md](CONTRACT.md); that document is the authority on full request and response shapes.
+  [CONTRACT.md](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/CONTRACT.md); that document is the authority on full request and response shapes.
   This page tells you which route each tool hits so you always know where to look deeper.
 - **Errors are data, not crashes.** A bad argument, a studio-side `4xx/5xx`, or an unset
   `STUDIO_API_TOKEN` all come back as an MCP tool result with `isError: true` and a readable
@@ -245,7 +245,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 ## Tool reference
 
 **116** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
-optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
+optional. Response shapes below show the fields you will steer by; [CONTRACT.md](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/CONTRACT.md) has
 the full schemas.
 
 ### Registry and reads (free, safe to call any time)
@@ -377,7 +377,8 @@ trained **once** and reused across every project.
 - `renderOverrides`: optional training overrides.
 
 **`train_cast_wan_lora`** -- `POST /api/cast/:id/train-wan-lora`. **Spends GPU** (Wan cast LoRA).
-Needs `RUNPOD_WAN_TRAIN_ENDPOINT_ID` on the host. Sibling of `train_cast_lora` (SDXL).
+Needs `RUNPOD_WAN_TRAIN_ENDPOINT_ID` on the host, pointing at an operator's own endpoint: the hosted
+RunPod Wan training endpoint is retired (Wan training is self-host only). Sibling of `train_cast_lora` (SDXL).
 - `id` (required); optional `renderOverrides`.
 
 **`export_cast`** -- `GET /api/cast/export/:id`. `.vvcast` tar export (binary summarized in MCP).
@@ -546,7 +547,7 @@ cast references) into R2 and return its `bundleKey`, the required input to `subm
 itself does not spend GPU time.
 - `storyboard` (required): the storyboard to bundle.
 - `characterRefs` (required): `{ [slot]: ref }` cast references (see
-  [CAST-BUNDLE.md](CAST-BUNDLE.md) for the ref shape; the Slate client is the reference consumer).
+  [CAST-BUNDLE.md](https://github.com/skyphusion-labs/vivijure-cf/blob/main/docs/CAST-BUNDLE.md) for the ref shape; the Slate client is the reference consumer).
 - `startImage`: optional film-level start frame `{ key?, dataUrl?, filename? }`. Lands as
   `start_image.png`.
 - `sceneStartImages`: reverse-bridge (mcp#26). `{ [sceneId]: { key?, dataUrl?, filename? } }`

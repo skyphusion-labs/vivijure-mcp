@@ -100,14 +100,14 @@ describe("MCP gate: MCP_TOKEN_EXTRA is additive", () => {
 
   // The bare "Bearer " a blank credential would admit, tested against the gate predicate directly.
   // With the filter: no credential is empty, so this is false whatever the secret's punctuation.
-  it("never opens the gate for a bare `Bearer ` however the secret is punctuated", () => {
+  it("never opens the gate for a bare `Bearer ` however the secret is punctuated", async () => {
     for (const extra of ["crew-a,", "crew-a\n", " , \n , ", ",,", "crew-a,,crew-b,"]) {
       const env = { ...BASE, MCP_TOKEN: "operator-secret", MCP_TOKEN_EXTRA: extra };
-      expect(gateOpens("Bearer ", env)).toBe(false);
-      expect(gateOpens("Bearer", env)).toBe(false);
-      expect(gateOpens("", env)).toBe(false);
+      expect(await gateOpens("Bearer ", env)).toBe(false);
+      expect(await gateOpens("Bearer", env)).toBe(false);
+      expect(await gateOpens("", env)).toBe(false);
       // control: the same env must still admit a real credential, or the falses above prove nothing.
-      expect(gateOpens("Bearer operator-secret", env)).toBe(true);
+      expect(await gateOpens("Bearer operator-secret", env)).toBe(true);
     }
   });
 

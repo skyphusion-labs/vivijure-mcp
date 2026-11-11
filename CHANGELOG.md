@@ -4,6 +4,12 @@
 prefix is what the publish workflow matches on. The tag is the version of record. This file records
 the why behind each release. Newest first.
 
+## Unreleased
+
+- **feat(auth): each gate token holds a scope, on the studio's operator / consumer split.** Every tool now declares `scope: "operator" | "consumer"` (required, so a new tool cannot omit it). Operator: the 37 `cp_*` tools, the studio module install, enable and config tools, `storage_usage` and `storage_reconcile`, and the two raw escape hatches. Consumer: the other 59. `MCP_TOKEN` holds operator. An `MCP_TOKEN_EXTRA` entry holds consumer unless written `operator:<token>`; **an entry with no prefix is consumer**, so an existing extra client keeps its consumer tools and needs the `operator:` prefix for the rest. A consumer token lists only consumer tools and gets a tool error for the others, with nothing sent. The control-plane bearer is used only for an operator token. See docs/mcp.md, Token scopes.
+- **fix(tools): an id of `.` or `..` is refused before the path is built**, for every id argument, and an artifact key with an empty or `.` segment is refused too.
+- **fix(gate): the gate compares SHA-256 digests**, as vivijure-cf's auth-gate.ts does, so the compare takes the same time whatever the presented token's length.
+
 ## v2.1.0 -- 2026-10-30
 
 MINOR. One new tool, `retry_film_finish`, so the catalog goes from 105 tools to 106. No argument of an existing tool changes.

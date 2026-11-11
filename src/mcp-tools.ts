@@ -51,8 +51,22 @@ export type McpContent =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
 
+/** Who may call a tool, on the studio's own split (vivijure-cf#520).
+ *   operator  -- installation, configuration, estate-wide state, and every control-plane admin call.
+ *   consumer  -- one tenant's own studio data, however destructive.
+ *  The two raw escape hatches are operator: studio_request can reach any studio route, operator ones
+ *  included, and control_plane_request is control-plane admin. */
+export type ToolScope = "operator" | "consumer";
+
+/** Whether a gate credential holding `credential` may call a tool requiring `tool`. */
+export function scopeAllows(tool: ToolScope, credential: ToolScope): boolean {
+  return tool === "consumer" || credential === "operator";
+}
+
 export interface McpTool {
   name: string;
+  /** REQUIRED, so a new tool without a decision does not compile. */
+  scope: ToolScope;
   description: string;
   inputSchema: Record<string, unknown>;
   // cf#317: opt this tool into returning image bytes as an MCP image block. Off by default, because
@@ -74,6 +88,15 @@ const NUM = (description: string) => ({ type: "number", description });
 const ARR = (description: string) => ({ type: "array", description });
 
 // Pull a required, non-empty string argument (used for path ids). Throws on absence.
+/** One path segment from a required argument, percent-encoded. "." and ".." are refused before any
+ *  path is built: encodeURIComponent leaves them as they are, and a URL parser then resolves them,
+ *  which would change the route the call reaches. */
+function pathSeg(args: Record<string, unknown>, key: string): string {
+  const v = reqStr(args, key);
+  if (v === "." || v === "..") throw new Error(`invalid '${key}': '${v}' is not an id`);
+  return encodeURIComponent(v);
+}
+
 function reqStr(args: Record<string, unknown>, key: string): string {
   const v = args[key];
   if (typeof v !== "string" || v.trim() === "") {
@@ -87,7 +110,8 @@ function reqStr(args: Record<string, unknown>, key: string): string {
 // get encoded away. A key shaped like a traversal or an absolute path is refused here rather than
 // forwarded; the studio refuses it too, but a bad argument should read as a bad argument.
 function keyPath(raw: string): string {
-  if (raw.startsWith("/") || raw.includes("://") || raw.split("/").includes("..")) {
+  const segs = raw.split("/");
+  if (raw.startsWith("/") || raw.includes("://") || segs.some((s) => s === "" || s === "." || s === "..")) {
     throw new Error(`invalid artifact key '${raw}'`);
   }
   return raw.split("/").map(encodeURIComponent).join("/");
@@ -181,6 +205,7 @@ export const TOOLS: McpTool[] = [
   // --- registry / reads -------------------------------------------------------
   {
     name: "studio_modules",
+    scope: "consumer",
     description:
       "GET /api/modules. The studio projection the whole pipeline renders from: installed modules " +
       "and their config_schema, which module names serve each hook (pre-sorted), the hook catalog, " +
@@ -191,6 +216,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "voices",
+    scope: "consumer",
     description:
       "GET /api/voices. The 12 valid Aura-1 speaker ids + labels; the only legal voice_id values for " +
       "update_cast AND for submit_film dialogue_lines[].voice_id (the voice-only film path, mcp#29).",
@@ -199,6 +225,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "storyboard_models",
+    scope: "consumer",
     description:
       "GET /api/storyboard/models. The planning model catalog (the model ids accepted by " +
       "plan_storyboard / refine_storyboard / chat).",
@@ -207,33 +234,38 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "list_cast",
+    scope: "consumer",
     description: "GET /api/cast. Every cast member (id, name, bible, portrait, LoRA status, voice).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/cast" }),
   },
   {
     name: "get_cast",
+    scope: "consumer",
     description: "GET /api/cast/:id. One cast member by its public id.",
     inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
-    build: (a) => ({ method: "GET", path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}` }),
+    build: (a) => ({ method: "GET", path: `/api/cast/${pathSeg(a, "id")}` }),
   },
   {
     name: "list_projects",
+    scope: "consumer",
     description: "GET /api/storyboard/projects. Every storyboard project.",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/storyboard/projects" }),
   },
   {
     name: "get_project",
+    scope: "consumer",
     description: "GET /api/storyboard/projects/:id. One project (incl. its last saved storyboard).",
     inputSchema: OBJ({ id: STR("Project public id.") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/storyboard/projects/${pathSeg(a, "id")}`,
     }),
   },
   {
     name: "list_renders",
+    scope: "consumer",
     description:
       "GET /api/storyboard/renders. The render library (history rows). Optional project_id filter " +
       "and limit (default 50).",
@@ -254,6 +286,7 @@ export const TOOLS: McpTool[] = [
   // --- project + library WRITE (cf#317) ---------------------------------------
   {
     name: "create_project",
+    scope: "consumer",
     description:
       "POST /api/storyboard/projects. CREATE a storyboard project. Body: { name (req), prefs? }. " +
       "Returns 201 { project } whose `id` is the public id every other project tool takes. Until " +
@@ -273,6 +306,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "save_storyboard",
+    scope: "consumer",
     description:
       "POST /api/storyboard/projects/:id/storyboard. SAVE a storyboard as the project's last saved " +
       "storyboard -- the one `get_project` returns. Body: { storyboard (req) }. This is the write " +
@@ -292,13 +326,14 @@ export const TOOLS: McpTool[] = [
       }
       return {
         method: "POST",
-        path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}/storyboard`,
+        path: `/api/storyboard/projects/${pathSeg(a, "id")}/storyboard`,
         body: bodyWithout(a, "id"),
       };
     },
   },
   {
     name: "update_project",
+    scope: "consumer",
     description:
       "PATCH /api/storyboard/projects/:id. Update a project's metadata. Body: { name?, prefs?, " +
       "storyboard? }. NOTE THE STUDIO'S EITHER/OR: if `storyboard` is present the route saves the " +
@@ -319,23 +354,25 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "PATCH",
-      path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/storyboard/projects/${pathSeg(a, "id")}`,
       body: bodyWithout(a, "id"),
     }),
   },
   {
     name: "delete_project",
+    scope: "consumer",
     description:
       "DELETE /api/storyboard/projects/:id. Delete a project. Returns { ok: true, deleted: <id> }, " +
       "or 404 if the id is unknown. IRREVERSIBLE.",
     inputSchema: OBJ({ id: STR("Project public id.") }, ["id"]),
     build: (a) => ({
       method: "DELETE",
-      path: `/api/storyboard/projects/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/storyboard/projects/${pathSeg(a, "id")}`,
     }),
   },
   {
     name: "render_tags",
+    scope: "consumer",
     description:
       "GET /api/storyboard/renders/tags. Every tag in use across the render library, as " +
       "{ tags: string[] }. Read this before setting tags with `update_render` so an agent reuses " +
@@ -345,6 +382,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "update_render",
+    scope: "consumer",
     description:
       "PATCH /api/storyboard/renders/:id. Organize a render-library row: { label?, lockedShots?, " +
       "folderPath?, tags? }. Only the fields you send are applied, each normalized by the studio. " +
@@ -362,19 +400,20 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "PATCH",
-      path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/storyboard/renders/${pathSeg(a, "id")}`,
       body: bodyWithout(a, "id"),
     }),
   },
   {
     name: "delete_render",
+    scope: "consumer",
     description:
       "DELETE /api/storyboard/renders/:id. Remove a render-library row. Returns { ok: true }, or " +
       "404 if the id is unknown. IRREVERSIBLE.",
     inputSchema: OBJ({ id: STR("Render row public id (from list_renders).") }, ["id"]),
     build: (a) => ({
       method: "DELETE",
-      path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/storyboard/renders/${pathSeg(a, "id")}`,
     }),
   },
 
@@ -385,6 +424,7 @@ export const TOOLS: McpTool[] = [
   // is half a capability, so those stay on studio_request until that lands.
   {
     name: "add_render_audio",
+    scope: "consumer",
     description:
       "POST /api/storyboard/renders/:id/add-audio. Mux a staged audio bed onto a FINISHED render, " +
       "off the GPU. Body: { audioKey (req) } -- the key from `upload_audio` or a generated bed. " +
@@ -401,13 +441,14 @@ export const TOOLS: McpTool[] = [
       reqStr(a, "audioKey");
       return {
         method: "POST",
-        path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}/add-audio`,
+        path: `/api/storyboard/renders/${pathSeg(a, "id")}/add-audio`,
         body: bodyWithout(a, "id"),
       };
     },
   },
   {
     name: "add_render_narration",
+    scope: "consumer",
     description:
       "POST /api/storyboard/renders/:id/add-narration. Generate a narration track from text and mux " +
       "it onto a FINISHED render. THIS SPENDS (TTS inference, not GPU render). Body: { text (req), " +
@@ -428,7 +469,7 @@ export const TOOLS: McpTool[] = [
       reqStr(a, "text");
       return {
         method: "POST",
-        path: `/api/storyboard/renders/${encodeURIComponent(reqStr(a, "id"))}/add-narration`,
+        path: `/api/storyboard/renders/${pathSeg(a, "id")}/add-narration`,
         body: bodyWithout(a, "id"),
       };
     },
@@ -437,6 +478,7 @@ export const TOOLS: McpTool[] = [
   // --- cast -------------------------------------------------------------------
   {
     name: "create_cast",
+    scope: "consumer",
     description: "POST /api/cast. Create a cast member. Body: { name (req), bible? }.",
     inputSchema: OBJ(
       { name: STR("Display name."), bible: STR("Character description / bible.") },
@@ -449,6 +491,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "update_cast",
+    scope: "consumer",
     description:
       "PATCH /api/cast/:id. Update a cast member. Body: { name?, bible?, voice_id? }. voice_id must " +
       "be one of the 12 ids from `voices` (or null/\"\" to clear).",
@@ -463,12 +506,13 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "PATCH",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/cast/${pathSeg(a, "id")}`,
       body: bodyWithout(a, "id"),
     }),
   },
   {
     name: "set_cast_portrait",
+    scope: "consumer",
     description:
       "POST /api/cast/:id/portrait. Set a cast member's portrait (the identity seed). Body: " +
       "{ from_chat_artifact (req) } -- despite the name this copies from ANY studio artifact key, " +
@@ -487,7 +531,7 @@ export const TOOLS: McpTool[] = [
       reqStr(a, "from_chat_artifact");
       return {
         method: "POST",
-        path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/portrait`,
+        path: `/api/cast/${pathSeg(a, "id")}/portrait`,
         body: bodyWithout(a, "id"),
       };
     },
@@ -495,26 +539,29 @@ export const TOOLS: McpTool[] = [
 
   {
     name: "delete_cast",
+    scope: "consumer",
     description:
       "DELETE /api/cast/:id. Delete a cast member and reclaim its R2 artifacts (portrait, refs, " +
       "sources). Returns { ok: true, deleted: <id> }, or 404 if the id is unknown. IRREVERSIBLE, " +
       "and it takes the trained LoRA's binding with it.",
     inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
-    build: (a) => ({ method: "DELETE", path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}` }),
+    build: (a) => ({ method: "DELETE", path: `/api/cast/${pathSeg(a, "id")}` }),
   },
   {
     name: "clear_cast_portrait",
+    scope: "consumer",
     description:
       "DELETE /api/cast/:id/portrait. Clear a cast member's portrait and delete the R2 object " +
       "(best-effort, so a missing object never blocks the clear). Returns { cast }.",
     inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
     build: (a) => ({
       method: "DELETE",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/portrait`,
+      path: `/api/cast/${pathSeg(a, "id")}/portrait`,
     }),
   },
   {
     name: "add_cast_ref",
+    scope: "consumer",
     description:
       "POST /api/cast/:id/ref. Add a LoRA TRAINING REFERENCE image to a cast member -- the set " +
       "`train_cast_lora` learns the character's face from. Body: { from_chat_artifact (req) }, an " +
@@ -532,13 +579,14 @@ export const TOOLS: McpTool[] = [
       reqStr(a, "from_chat_artifact");
       return {
         method: "POST",
-        path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/ref`,
+        path: `/api/cast/${pathSeg(a, "id")}/ref`,
         body: bodyWithout(a, "id"),
       };
     },
   },
   {
     name: "remove_cast_ref",
+    scope: "consumer",
     description:
       "DELETE /api/cast/:id/refs/<refKey>. Remove one training reference from a cast member and " +
       "delete its R2 object. `ref_key` is the full key as `get_cast` reports it (e.g. " +
@@ -554,11 +602,12 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "DELETE",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/refs/${keyPath(reqStr(a, "ref_key"))}`,
+      path: `/api/cast/${pathSeg(a, "id")}/refs/${keyPath(reqStr(a, "ref_key"))}`,
     }),
   },
   {
     name: "add_cast_source",
+    scope: "consumer",
     description:
       "POST /api/cast/:id/source. Add a SOURCE photo to a cast member: extra conditioning material, " +
       "distinct from the training reference set. Body: { from_chat_artifact (req) }, an existing " +
@@ -575,13 +624,14 @@ export const TOOLS: McpTool[] = [
       reqStr(a, "from_chat_artifact");
       return {
         method: "POST",
-        path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/source`,
+        path: `/api/cast/${pathSeg(a, "id")}/source`,
         body: bodyWithout(a, "id"),
       };
     },
   },
   {
     name: "remove_cast_source",
+    scope: "consumer",
     description:
       "DELETE /api/cast/:id/source/<sourceKey>. Remove one source photo and delete its R2 object. " +
       "`source_key` is the full key as `get_cast` reports it; it spans slashes, so it goes in the " +
@@ -595,11 +645,12 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "DELETE",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/source/${keyPath(reqStr(a, "source_key"))}`,
+      path: `/api/cast/${pathSeg(a, "id")}/source/${keyPath(reqStr(a, "source_key"))}`,
     }),
   },
   {
     name: "generate_cast_refs",
+    scope: "consumer",
     description:
       "POST /api/cast/:id/generate-refs. THIS SPENDS (image inference). Ask the installed cast.image " +
       "module to SYNTHESIZE a LoRA training reference set for this cast member from its portrait. " +
@@ -619,12 +670,13 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/generate-refs`,
+      path: `/api/cast/${pathSeg(a, "id")}/generate-refs`,
       body: bodyWithout(a, "id"),
     }),
   },
   {
     name: "poll_cast_refs",
+    scope: "consumer",
     description:
       "GET /api/cast/:id/refs-job/:jobId. Advance + poll a ref-generation job one tick. Returns " +
       "{ job_id, cast_id, phase, module?, registered, images, error? }. Call repeatedly until phase " +
@@ -639,11 +691,12 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "GET",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/refs-job/${encodeURIComponent(reqStr(a, "job_id"))}`,
+      path: `/api/cast/${pathSeg(a, "id")}/refs-job/${pathSeg(a, "job_id")}`,
     }),
   },
   {
     name: "train_cast_lora",
+    scope: "consumer",
     description:
       "POST /api/cast/:id/train-lora. THIS SPENDS GPU TIME (a training run, on the order of tens of " +
       "minutes). Trains the character's identity LoRA from the member's reference set and banks the " +
@@ -669,12 +722,13 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/train-lora`,
+      path: `/api/cast/${pathSeg(a, "id")}/train-lora`,
       body: bodyWithout(a, "id"),
     }),
   },
   {
     name: "cast_lora_status",
+    scope: "consumer",
     description:
       "GET /api/cast/:id/lora-status. The cast member's LoRA training state: lora_status is one of " +
       "'idle' | 'training' | 'ready' | 'failed', plus lora_job_id and lora_error. Poll this after " +
@@ -683,13 +737,14 @@ export const TOOLS: McpTool[] = [
     inputSchema: OBJ({ id: STR("Cast member public id.") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/lora-status`,
+      path: `/api/cast/${pathSeg(a, "id")}/lora-status`,
     }),
   },
 
   // --- planning ---------------------------------------------------------------
   {
     name: "plan_storyboard",
+    scope: "consumer",
     description:
       "POST /api/storyboard/plan. Plan a storyboard from a brief with an LLM. Body: { brief (req), " +
       "model (req), characters?, beatBlock? }. Each characters entry is { slot, name, bible }: slot " +
@@ -729,6 +784,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "refine_storyboard",
+    scope: "consumer",
     description:
       "POST /api/storyboard/refine. Refine an existing storyboard with an instruction. Body: " +
       "{ storyboard (req), message (req), model (req) }. Returns a validated storyboard (200) or " +
@@ -752,6 +808,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "preflight",
+    scope: "consumer",
     description:
       "POST /api/storyboard/preflight. Pre-render validation. Returns 200 with { ok, counts, issues }: " +
       "problems are DATA, not an HTTP error. Run before submit_film to catch blockers. Body: " +
@@ -794,6 +851,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "chat",
+    scope: "consumer",
     description:
       "POST /api/chat. Planner assistant / image generation. Body: { model (req), user_input (req), " +
       "system_prompt?, attachments? }. An image model returns { output_artifact: { key, mime } } " +
@@ -838,6 +896,7 @@ export const TOOLS: McpTool[] = [
   // --- render (spend) ---------------------------------------------------------
   {
     name: "bundle_storyboard",
+    scope: "consumer",
     description:
       "POST /api/storyboard/bundle. Assemble a render bundle (storyboard + cast refs) and return its " +
       "R2 bundleKey, the input to submit_film. Body: { storyboard (req), characterRefs (req), " +
@@ -876,6 +935,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "submit_film",
+    scope: "consumer",
     description:
       "POST /api/render/film. START A FILM RENDER (this SPENDS: GPU / cloud i2v). Body: { bundle_key " +
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
@@ -992,6 +1052,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "poll_film",
+    scope: "consumer",
     description:
       "GET /api/render/film/:id. Advance + poll a film job one tick. id is the film-* job id from " +
       "submit_film. A leftover scatter-* id returns 410 (film scatter is retired). An unknown id is " +
@@ -1013,11 +1074,12 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "GET",
-      path: `/api/render/film/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/render/film/${pathSeg(a, "id")}`,
     }),
   },
   {
     name: "retry_film_finish",
+    scope: "consumer",
     description:
       "POST /api/render/film/:id/finish-retry. Run again the finish steps a film names in " +
       "finish_incomplete (from poll_film). No clip is re-rendered and no GPU clip spend is repeated, " +
@@ -1030,7 +1092,7 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/render/film/${encodeURIComponent(reqStr(a, "id"))}/finish-retry`,
+      path: `/api/render/film/${pathSeg(a, "id")}/finish-retry`,
     }),
   },
 
@@ -1040,6 +1102,7 @@ export const TOOLS: McpTool[] = [
   // raw body and reject a JSON content-type, so those routes were not reachable by any MCP means.
   {
     name: "upload_image",
+    scope: "consumer",
     description:
       "POST /api/upload. BRING AN IMAGE INTO THE STUDIO (the bytes-in door for pictures). Pass the " +
       "image as base64 in `data_base64` plus its `mime`; returns { key, mime, size }. Use the " +
@@ -1060,6 +1123,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "upload_audio",
+    scope: "consumer",
     description:
       "POST /api/storyboard/audio-upload. BRING AUDIO INTO THE STUDIO (the bytes-in door for sound): " +
       "a music bed, a pre-recorded narration, any track you want muxed onto a film. Pass the audio " +
@@ -1084,6 +1148,7 @@ export const TOOLS: McpTool[] = [
   // --- artifacts (cf#317: see what you made) -----------------------------------
   {
     name: "view_artifact",
+    scope: "consumer",
     description:
       "GET /api/artifact/<key>. LOOK AT an artifact. An IMAGE (keyframe, cast portrait, character " +
       "ref, a still from `chat`) is returned inline so you can actually see it. Video and audio " +
@@ -1099,6 +1164,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "artifact_url",
+    scope: "consumer",
     description:
       "GET /api/artifact-url/<key>. Turn an artifact key into a SHORT-LIVED presigned download URL " +
       "plus its real content-type and byte size. This is how a finished film gets watched: the URL " +
@@ -1122,6 +1188,7 @@ export const TOOLS: McpTool[] = [
   // --- studio identity / prefs / storage / modules (1.3 panel parity) -----------
   {
     name: "whoami",
+    scope: "consumer",
     description:
       "GET /api/whoami. Studio identity (token mode returns a fixed operator identity; no email leak).",
     inputSchema: OBJ({}),
@@ -1129,12 +1196,14 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "get_prefs",
+    scope: "consumer",
     description: "GET /api/prefs. Operator prefs (planner model defaults, UI knobs the panel stores).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/prefs" }),
   },
   {
     name: "set_prefs",
+    scope: "consumer",
     description:
       "PATCH /api/prefs. Merge operator prefs. Body is forwarded; unknown keys are the studio's rule.",
     inputSchema: OBJ(
@@ -1155,6 +1224,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "storage_usage",
+    scope: "operator",
     description:
       "GET /api/storage/usage. Ledger usage: used_bytes, objects, quota_bytes, over.",
     inputSchema: OBJ({}),
@@ -1162,6 +1232,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "storage_reconcile",
+    scope: "operator",
     description:
       "POST /api/storage/reconcile. Rebuild the storage ledger from object store inventory (operator maintenance).",
     inputSchema: OBJ({}),
@@ -1169,18 +1240,21 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "list_models",
+    scope: "consumer",
     description: "GET /api/models. Planning/chat model catalog (sibling of storyboard_models).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/models" }),
   },
   {
     name: "list_installed_modules",
+    scope: "operator",
     description: "GET /api/modules/installed. Installed dynamic module rows.",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/modules/installed" }),
   },
   {
     name: "install_module",
+    scope: "operator",
     description:
       "POST /api/modules/install. Install a module script from the dispatch namespace. Body: " +
       "{ script_name (req) }. Needs MODULE_DISPATCH on the host.",
@@ -1195,15 +1269,17 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "uninstall_module",
+    scope: "operator",
     description: "DELETE /api/modules/install/:name. Remove an installed module.",
     inputSchema: OBJ({ name: STR("Module name.") }, ["name"]),
     build: (a) => ({
       method: "DELETE",
-      path: `/api/modules/install/${encodeURIComponent(reqStr(a, "name"))}`,
+      path: `/api/modules/install/${pathSeg(a, "name")}`,
     }),
   },
   {
     name: "set_module_enabled",
+    scope: "operator",
     description: "PATCH /api/modules/install/:name. Enable or disable an installed module.",
     inputSchema: OBJ(
       {
@@ -1216,13 +1292,14 @@ export const TOOLS: McpTool[] = [
       if (typeof a.enabled !== "boolean") throw new Error("'enabled' must be a boolean");
       return {
         method: "PATCH",
-        path: `/api/modules/install/${encodeURIComponent(reqStr(a, "name"))}`,
+        path: `/api/modules/install/${pathSeg(a, "name")}`,
         body: { enabled: a.enabled },
       };
     },
   },
   {
     name: "get_module_config",
+    scope: "operator",
     description:
       "GET /api/modules/:name/config. Install-scope config for one module (defaults filled). " +
       "This is the notify-hook surface (mcp#26): there is no send-notify route; the hook fires " +
@@ -1230,11 +1307,12 @@ export const TOOLS: McpTool[] = [
     inputSchema: OBJ({ name: STR("Module name.") }, ["name"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/modules/${encodeURIComponent(reqStr(a, "name"))}/config`,
+      path: `/api/modules/${pathSeg(a, "name")}/config`,
     }),
   },
   {
     name: "patch_module_config",
+    scope: "operator",
     description:
       "PATCH /api/modules/:name/config. Patch install-scope fields only (render-scope keys dropped). " +
       "Notify recipient lives here (e.g. { notify_email: 'ops@example.com' } on notify-email). " +
@@ -1252,13 +1330,14 @@ export const TOOLS: McpTool[] = [
       }
       return {
         method: "PATCH",
-        path: `/api/modules/${encodeURIComponent(reqStr(a, "name"))}/config`,
+        path: `/api/modules/${pathSeg(a, "name")}/config`,
         body: a.config,
       };
     },
   },
   {
     name: "train_cast_wan_lora",
+    scope: "consumer",
     description:
       "POST /api/cast/:id/train-wan-lora. THIS SPENDS GPU (Wan cast LoRA train). Needs " +
       "RUNPOD_WAN_TRAIN_ENDPOINT_ID on the host. Sibling of train_cast_lora (SDXL).",
@@ -1271,23 +1350,25 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/cast/${encodeURIComponent(reqStr(a, "id"))}/train-wan-lora`,
+      path: `/api/cast/${pathSeg(a, "id")}/train-wan-lora`,
       body: bodyWithout(a, "id"),
     }),
   },
   {
     name: "export_cast",
+    scope: "consumer",
     description:
       "GET /api/cast/export/:id. Export a .vvcast tar bundle. Binary is summarized (not dumped); " +
       "use studio_request + a client that can store bytes, or host-side export, for the file itself.",
     inputSchema: OBJ({ id: STR("Cast member id.") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/cast/export/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/cast/export/${pathSeg(a, "id")}`,
     }),
   },
   {
     name: "import_cast",
+    scope: "consumer",
     description:
       "POST /api/cast/import. Import a .vvcast tar (raw body). Pass data_base64 of the tar bytes; " +
       "mime application/x-tar. Returns the imported cast member.",
@@ -1302,6 +1383,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "score_bed",
+    scope: "consumer",
     description:
       "POST /api/storyboard/score-bed. Starts a score-hook job (music-gen / narration-gen). Poll " +
       "with poll_job, passing back the returned `module`. Body: { kind?, prompt?, text?, " +
@@ -1326,6 +1408,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "poll_job",
+    scope: "consumer",
     description:
       "GET /api/job/:id?module=. Poll a score-bed job until done/failed. The studio 400s without " +
       "`module` (CONTRACT 2.14); pass the `module` score_bed returned. This is the only /api/job " +
@@ -1339,12 +1422,13 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "GET",
-      path: `/api/job/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/job/${pathSeg(a, "id")}`,
       query: { module: reqStr(a, "module") },
     }),
   },
   {
     name: "enhance_storyboard",
+    scope: "consumer",
     description: "POST /api/storyboard/enhance. LLM enhance pass on a storyboard (inference spend).",
     inputSchema: OBJ(
       { storyboard: { type: "object", description: "Storyboard to enhance." } },
@@ -1359,6 +1443,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "storyboard_yaml",
+    scope: "consumer",
     description: "POST /api/storyboard/yaml. Convert / validate storyboard YAML forms.",
     inputSchema: OBJ(
       {
@@ -1370,6 +1455,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "storyboard_markers",
+    scope: "consumer",
     description: "POST /api/storyboard/markers. Derive markers from a storyboard / audio analysis.",
     inputSchema: OBJ(
       { storyboard: { type: "object", description: "Storyboard context." } },
@@ -1378,6 +1464,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "audio_analyze",
+    scope: "consumer",
     description:
       "POST /api/audio/analyze. Analyze a staged audio key for beats/markers. A film with `audio_key` " +
       "is refused until this has run on that key.",
@@ -1394,6 +1481,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "render_plan",
+    scope: "consumer",
     description:
       "POST /api/storyboard/render-plan. Build a render plan without starting a spend render.",
     inputSchema: OBJ(
@@ -1409,6 +1497,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "submit_clips",
+    scope: "consumer",
     description:
       "POST /api/render/clips. Start a clips-only render from keyframes you already have (SPENDS). " +
       "Poll with poll_clips. No keyframe, assemble or finish stage runs. Prefer submit_film for full films.",
@@ -1433,15 +1522,17 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "poll_clips",
+    scope: "consumer",
     description: "GET /api/render/clips/:id. Poll a clips job from submit_clips.",
     inputSchema: OBJ({ id: STR("Clips job id.") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/render/clips/${encodeURIComponent(reqStr(a, "id"))}`,
+      path: `/api/render/clips/${pathSeg(a, "id")}`,
     }),
   },
   {
     name: "render_frames",
+    scope: "consumer",
     description:
       "POST /api/render/frames. Sample frames from a render artifact into one contact sheet. Returns " +
       "the sheet's key (see view_artifact).",
@@ -1462,6 +1553,7 @@ export const TOOLS: McpTool[] = [
   // --- control plane (hosted platform admin; needs CONTROL_PLANE_* bindings) ---
   {
     name: "cp_whoami",
+    scope: "operator",
     description:
       "GET /api/admin/whoami. Operator identity + scopes for CONTROL_PLANE_ADMIN_TOKEN. " +
       "Call first when driving hosted ops.",
@@ -1470,6 +1562,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_platform_config",
+    scope: "operator",
     description:
       "GET /api/platform/config. Public front-door projection (auth methods, signups flags). " +
       "No admin token required by the plane, but this Worker still sends the admin bearer if set.",
@@ -1478,12 +1571,14 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_platform_version",
+    scope: "operator",
     description: "GET /api/platform/version. Control plane + pinned studio release on the wire.",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/platform/version", target: "control_plane" }),
   },
   {
     name: "cp_list_tenants",
+    scope: "operator",
     description:
       "GET /api/admin/tenants. Hosted tenant census (slug, status, suspended, account). " +
       "Requires tenants:read. This is how you find ten_ ids for bootstrap follow-ups.",
@@ -1492,12 +1587,14 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_get_settings",
+    scope: "operator",
     description: "GET /api/admin/settings. Platform settings (e.g. signups_enabled).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/admin/settings", target: "control_plane" }),
   },
   {
     name: "cp_set_settings",
+    scope: "operator",
     description:
       "POST /api/admin/settings. Flip platform settings (platform:settings). Body e.g. " +
       "{ signups_enabled: true|false }. Closing signups does not strand mid-onboarding accounts.",
@@ -1518,6 +1615,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_list_audit",
+    scope: "operator",
     description: "GET /api/admin/audit. Operator audit trail (tenants:read).",
     inputSchema: OBJ(
       {
@@ -1537,12 +1635,14 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_hosted_storage_usage",
+    scope: "operator",
     description: "GET /api/admin/r2-usage. Aggregate hosted R2 usage (not per-tenant content).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/admin/r2-usage", target: "control_plane" }),
   },
   {
     name: "cp_reconcile_runpod",
+    scope: "operator",
     description:
       "POST /api/admin/reconcile/runpod. Operator brings a RunPod snapshot; plane reconciles " +
       "endpoint inventory (tenants:read).",
@@ -1558,6 +1658,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_llm_meter_run",
+    scope: "operator",
     description: "POST /api/admin/llm-meter/run. Force an LLM spend ingest tick (meter:operate).",
     inputSchema: OBJ({}),
     build: () => ({
@@ -1569,6 +1670,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_meter_settle",
+    scope: "operator",
     description:
       "POST /api/admin/meter-settle. Force overage settlement from measured usage (meter:operate). " +
       "Not credits:write (does not mint money from nothing).",
@@ -1582,6 +1684,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_llm_spend",
+    scope: "operator",
     description: "GET /api/admin/llm-spend. LLM spend rollups (tenants:read).",
     inputSchema: OBJ(
       {
@@ -1597,12 +1700,14 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_kek_status",
+    scope: "operator",
     description: "GET /api/admin/kek/status. KEK rotation status (keys:rotate).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/admin/kek/status", target: "control_plane" }),
   },
   {
     name: "cp_kek_reencrypt",
+    scope: "operator",
     description: "POST /api/admin/kek/reencrypt. Start KEK re-encryption sweep (keys:rotate).",
     inputSchema: OBJ({}),
     build: () => ({
@@ -1614,12 +1719,14 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_list_operators",
+    scope: "operator",
     description: "GET /api/admin/operators. List operator credentials (root only).",
     inputSchema: OBJ({}),
     build: () => ({ method: "GET", path: "/api/admin/operators", target: "control_plane" }),
   },
   {
     name: "cp_create_operator",
+    scope: "operator",
     description:
       "POST /api/admin/operators. Mint a scoped operator credential (root only). Plaintext token " +
       "is returned ONCE -- store it; the plane keeps only a hash.",
@@ -1640,27 +1747,30 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "cp_revoke_operator",
+    scope: "operator",
     description: "POST /api/admin/operators/:id/revoke. Soft-revoke an opc_ credential (root only).",
     inputSchema: OBJ({ id: STR("opc_… credential id.") }, ["id"]),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/operators/${encodeURIComponent(reqStr(a, "id"))}/revoke`,
+      path: `/api/admin/operators/${pathSeg(a, "id")}/revoke`,
       body: {},
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_credits",
+    scope: "operator",
     description: "GET /api/admin/tenants/:id/credits. Prepaid credit balance (tenants:read).",
     inputSchema: OBJ({ id: STR("ten_… tenant id.") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/credits`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/credits`,
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_credits_manual",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/credits/manual. Manual credit grant/debit (credits:write). " +
       "Mints or removes money; require a real reason in the body.",
@@ -1675,25 +1785,27 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/credits/manual`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/credits/manual`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_module_readiness",
+    scope: "operator",
     description:
       "GET /api/admin/tenants/:id/module-readiness. What the tenant's module workers report " +
       "(tenants:read). Use after upgrade/bootstrap to verify doors.",
     inputSchema: OBJ({ id: STR("ten_… tenant id.") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/module-readiness`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/module-readiness`,
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_suspend",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/suspend. Pull routing immediately (tenants:write). reason required.",
     inputSchema: OBJ(
@@ -1702,13 +1814,14 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/suspend`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/suspend`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_resume",
+    scope: "operator",
     description: "POST /api/admin/tenants/:id/resume. Clear suspension (tenants:write).",
     inputSchema: OBJ(
       { id: STR("ten_…"), reason: STR("Why (audit).") },
@@ -1716,13 +1829,14 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/resume`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/resume`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_teardown",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/teardown. IRREVERSIBLE destroy (tenants:destroy). Empties R2, " +
       "deletes Worker/D1 bindings per plane policy. Refused under a preservation hold.",
@@ -1736,13 +1850,14 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/teardown`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/teardown`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_upgrade_studio",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/upgrade-studio. Push the pinned published studio release to the " +
       "tenant Worker (studio:operate). Primary bootstrap/repair after provision.",
@@ -1752,13 +1867,14 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/upgrade-studio`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/upgrade-studio`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_upgrade_modules",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/upgrade-modules. Upgrade tenant module workers (studio:operate).",
     inputSchema: OBJ(
@@ -1767,39 +1883,42 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/upgrade-modules`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/upgrade-modules`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_refresh_bindings",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/refresh-studio-bindings. Re-apply studio bindings/secrets " +
       "(studio:operate). Use after binding drift.",
     inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/refresh-studio-bindings`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/refresh-studio-bindings`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_invoke_key_handoff",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/invoke-key-handoff. Mint owner handoff for RunPod invoke key B " +
       "(studio:operate). Owner completes unauthenticated /api/handoff/invoke-key.",
     inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/invoke-key-handoff`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/invoke-key-handoff`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_reprovision_runpod",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/reprovision-runpod. Rebuild RunPod endpoints for a live tenant " +
       "(studio:operate). Needs a transient provisioning key per plane custody rules.",
@@ -1812,26 +1931,28 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/reprovision-runpod`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/reprovision-runpod`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_smoke_render",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/smoke-render. SPENDS GPU: fire a smoke film through the tenant " +
       "studio (studio:operate). Poll with cp_poll_smoke_render.",
     inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/smoke-render`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/smoke-render`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_poll_smoke_render",
+    scope: "operator",
     description: "GET /api/admin/tenants/:id/smoke-render/:smk. Poll smoke render status (tenants:read).",
     inputSchema: OBJ(
       { id: STR("ten_…"), smoke_id: STR("smk_… job id.") },
@@ -1839,25 +1960,27 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "GET",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/smoke-render/${encodeURIComponent(reqStr(a, "smoke_id"))}`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/smoke-render/${pathSeg(a, "smoke_id")}`,
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_abuse_report_url",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/abuse-report-url. Converge host.abuse_report_url onto the tenant " +
       "studio (tenants:write). Hosted-only by construction.",
     inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/abuse-report-url`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/abuse-report-url`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_storage_quota",
+    scope: "operator",
     description: "POST /api/admin/tenants/:id/storage-quota. Set tenant storage quota (tenants:write).",
     inputSchema: OBJ(
       {
@@ -1868,26 +1991,28 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/storage-quota`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/storage-quota`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_video_finish_binding",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/video-finish-binding. Converge video-finish module binding " +
       "(tenants:write).",
     inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/video-finish-binding`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/video-finish-binding`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_tenant_video_finish_tier_state",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/video-finish-tier-state. Mark finish tier reachable/unreachable " +
       "(tenants:write).",
@@ -1900,23 +2025,25 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/video-finish-tier-state`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/video-finish-tier-state`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_list_preservation_holds",
+    scope: "operator",
     description: "GET /api/admin/tenants/:id/preservation-holds. List holds (tenants:read).",
     inputSchema: OBJ({ id: STR("ten_…") }, ["id"]),
     build: (a) => ({
       method: "GET",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/preservation-holds`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/preservation-holds`,
       target: "control_plane",
     }),
   },
   {
     name: "cp_open_preservation_hold",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/preservation-holds. Open a statutory hold (tenants:write). " +
       "Blocks teardown until human release.",
@@ -1930,13 +2057,14 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/preservation-holds`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/preservation-holds`,
       body: bodyWithout(a, "id"),
       target: "control_plane",
     }),
   },
   {
     name: "cp_release_preservation_hold",
+    scope: "operator",
     description:
       "POST /api/admin/tenants/:id/preservation-holds/:hold_id/release. Human release only " +
       "(tenants:write). Clocks never auto-release.",
@@ -1950,7 +2078,7 @@ export const TOOLS: McpTool[] = [
     ),
     build: (a) => ({
       method: "POST",
-      path: `/api/admin/tenants/${encodeURIComponent(reqStr(a, "id"))}/preservation-holds/${encodeURIComponent(reqStr(a, "hold_id"))}/release`,
+      path: `/api/admin/tenants/${pathSeg(a, "id")}/preservation-holds/${pathSeg(a, "hold_id")}/release`,
       body: bodyWithout(a, "id", "hold_id"),
       target: "control_plane",
     }),
@@ -1959,6 +2087,7 @@ export const TOOLS: McpTool[] = [
   // --- escape hatches -----------------------------------------------------------
   {
     name: "studio_request",
+    scope: "operator",
     description:
       "Generic escape hatch to a studio CONTRACT route under /api/ not covered by a curated tool " +
       "(e.g. storyboard/render doors that remain uncurated until cf#334 sound reconciliation, " +
@@ -1986,6 +2115,7 @@ export const TOOLS: McpTool[] = [
   },
   {
     name: "control_plane_request",
+    scope: "operator",
     description:
       "Escape hatch to ANY vivijure-control-plane path (admin or public). Uses " +
       "CONTROL_PLANE_ADMIN_TOKEN. Prefer curated cp_* tools. path must start with '/'. " +
@@ -2117,6 +2247,10 @@ function genericRequest(
 
 export const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
+/** The refusal for a tool the presenting credential's scope does not cover. Says which scope is
+ *  needed and nothing about the credential itself. */
+export const SCOPE_DENY_TEXT = "This credential is not authorized for this tool: it needs an operator-scoped MCP token.";
+
 // Build the absolute studio URL for a call, appending any defined query params. STUDIO_URL is
 // normalized (trailing slash trimmed); a missing STUDIO_URL throws (fail closed at call time).
 
@@ -2185,9 +2319,15 @@ function toBase64(bytes: Uint8Array): string {
 export async function runTool(
   env: McpEnv,
   call: StudioCall,
-  opts: { inlineImages?: boolean } = {},
+  opts: { inlineImages?: boolean; scope?: ToolScope } = {},
 ): Promise<{ content: McpContent[]; isError: boolean }> {
   const target: CallTarget = call.target ?? "studio";
+  // The control-plane bearer is used only for an operator credential, whatever tool built the call.
+  // The tool scope check in mcp.ts comes first; this is the second line, at the one place the bearer
+  // is chosen. An unset scope is an internal caller (tests, a host), which keeps the old behaviour.
+  if (target === "control_plane" && opts.scope !== undefined && opts.scope !== "operator") {
+    return { content: [{ type: "text", text: SCOPE_DENY_TEXT }], isError: true };
+  }
   const bearer =
     target === "control_plane"
       ? env.CONTROL_PLANE_ADMIN_TOKEN

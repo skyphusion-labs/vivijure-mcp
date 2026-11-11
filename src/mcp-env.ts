@@ -44,7 +44,11 @@ export interface McpEnv {
   // Each entry is trimmed and BLANK ENTRIES ARE DROPPED: "tok," splits to ["tok", ""], and an
   // empty credential would make the expected header the bare string "Bearer ", which any client
   // can send -- so a trailing comma or a stray newline would otherwise open the door to everyone.
-  // Read this ONLY via gateCredentials() in mcp.ts, never directly: a call site reading MCP_TOKEN
-  // alone sees a PARTIAL credential set and 401s every client holding one of these.
+  // Read this ONLY via gateEntries() / gateCredentials() in mcp.ts, never directly: a call site
+  // reading MCP_TOKEN alone sees a PARTIAL credential set and 401s every client holding one of these.
+  //
+  // SCOPE: an entry holds "consumer" unless written "operator:<token>" ("consumer:<token>" is
+  // accepted too); MCP_TOKEN holds "operator". A consumer credential lists and calls consumer tools
+  // only (the studio's vivijure-cf#520 split). The prefix is not part of the token on the wire.
   MCP_TOKEN_EXTRA?: string;
 }

@@ -83,8 +83,8 @@ The Worker reads these values:
 |-------|------|------------|
 | `STUDIO_URL` | var (in `wrangler.mcp.toml`) | The base URL of your studio, e.g. `https://studio.example.com`. No trailing slash needed (it is normalized). |
 | `STUDIO_API_TOKEN` | secret | The studio bearer the MCP presents on every forwarded call (the named consumer token from above). |
-| `MCP_TOKEN` | secret | The gate. Every agent request must carry `Authorization: Bearer <MCP_TOKEN>`. Treated as ONE opaque value: never split, never trimmed. |
-| `MCP_TOKEN_EXTRA` | secret (optional) | ADDITIVE further gate tokens, comma- and/or newline-separated. Any entry opens the gate exactly like `MCP_TOKEN`. Issue a second client its own credential here so `MCP_TOKEN` is never rewritten. Blank entries (a trailing comma, a stray newline) are dropped. |
+| `MCP_TOKEN` | secret | The gate, and the operator's own credential: it holds **operator** scope (every tool). Every agent request must carry `Authorization: Bearer <token>`. Treated as ONE opaque value: never split, never trimmed, never read for a scope prefix. |
+| `MCP_TOKEN_EXTRA` | secret (optional) | ADDITIVE further gate tokens, comma- and/or newline-separated. Issue a second client its own credential here so `MCP_TOKEN` is never rewritten. Each entry holds **consumer** scope unless written `operator:<token>` (`consumer:<token>` is accepted too). The client sends the token alone, without the prefix. Blank entries (a trailing comma, a stray newline) are dropped. See [Token scopes](#token-scopes). |
 | `CONTROL_PLANE_URL` | var (optional) | Hosted control plane base, e.g. `https://studio.vivijure.com`. Enables `cp_*` tools. |
 | `CONTROL_PLANE_ADMIN_TOKEN` | secret (optional) | Admin/operator bearer for `/api/admin/*`. Distinct from the studio token. |
 
@@ -110,8 +110,9 @@ wrangler secret put MCP_TOKEN -c wrangler.mcp.toml < mcp-token.txt
 
 # 5. OPTIONAL: issue a SECOND client its own gate token without touching MCP_TOKEN.
 #    Worker secrets are write-only, so widening access by rewriting MCP_TOKEN means re-supplying
-#    your own token from memory and one typo silently 401s you. Put additional tokens here instead;
-#    any entry opens the gate exactly like MCP_TOKEN, and MCP_TOKEN is never rewritten.
+#    your own token from memory and one typo silently 401s you. Put additional tokens here instead,
+#    and MCP_TOKEN is never rewritten. An entry holds consumer scope; write operator:<token> for an
+#    entry that needs the operator tools (see Token scopes below).
 #    Comma- and/or newline-separated. This secret REPLACES its previous value on every put, so
 #    re-supply the full list of extra tokens each time (that list never contains MCP_TOKEN).
 umask 077 && openssl rand -hex 32 > mcp-token-crew.txt
@@ -886,16 +887,34 @@ After a human has provisioned (front door + AUP + keys):
 Point a studio-configured MCP at `https://<slug>.studio.vivijure.com` with a **tenant** API token
 for creative tools (separate from the admin bearer).
 
+## Token scopes
+
+Each gate token holds a scope, on the studio's own split (vivijure-cf#520):
+
+- **operator**: every tool. This covers the studio's operator routes (module install, enable and
+  config; storage usage and reconcile), every `cp_*` control-plane tool, and both raw escape
+  hatches, `studio_request` and `control_plane_request`.
+- **consumer**: the studio tools that touch one tenant's own data (projects, storyboards, cast,
+  renders, audio, artifacts), however destructive.
+
+`MCP_TOKEN` holds operator. An `MCP_TOKEN_EXTRA` entry holds consumer unless it is written
+`operator:<token>`. **An entry with no prefix is consumer**, including every entry issued before
+scopes existed, so an existing extra client keeps its consumer tools and loses the operator ones.
+To give it the operator tools again, re-put the list with `operator:` in front of its entry.
+
+A consumer token lists only consumer tools in `tools/list`. A call to an operator tool returns a
+tool error ("This credential is not authorized for this tool: it needs an operator-scoped MCP
+token.") and sends nothing. The control-plane bearer is used only for an operator token.
+
 ## Security boundary
 
 - The MCP is machine-to-machine only, gated by `MCP_TOKEN` and any token in `MCP_TOKEN_EXTRA`
   (fail closed: a wrong token is a `401`, and a Worker with NO gate token at all refuses everything
   rather than opening up). It is a full write path to the studio, **including spend routes**
   (`submit_film`) and, via `studio_request`, delete routes. Treat EVERY gate token with exactly the
-  care you give the studio bearer itself: `MCP_TOKEN_EXTRA` is a convenience for issuing and
-  revoking credentials independently, **not** a lower tier of access. There is no per-token scoping
-  and the Worker never records which token was used, so an extra token is a full-privilege
-  credential.
+  care you give the studio bearer itself. A consumer token still reaches spend and delete routes on
+  the tenant's own data; it cannot reach the operator tools (see [Token scopes](#token-scopes)). The
+  Worker never records which token was used.
 - Give the MCP its own named consumer token (see [Before you start](#before-you-start)) so a leak
   burns one credential, rotation touches one consumer, and MCP traffic is attributable in the
   observability stream.

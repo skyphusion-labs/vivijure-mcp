@@ -40,6 +40,8 @@ flowchart TB
 
 - Agent never sees the studio or control-plane secrets (only its gate token: `MCP_TOKEN`, or one of
   the additive tokens in `MCP_TOKEN_EXTRA`).
+- Each gate token holds a scope: `MCP_TOKEN` is operator (every tool); an `MCP_TOKEN_EXTRA` entry is
+  consumer unless written `operator:<token>`. See docs/mcp.md, Token scopes.
 - Long jobs are agent-driven poll loops (`submit_film` → `poll_film`, smoke render, etc.).
 - Opt-in: default self-host does **not** deploy MCP.
 

@@ -52,7 +52,8 @@ npm run build           # tsc -p tsconfig.build.json -> dist/
 ## Deploy model
 
 1. **npm publish** on tag `vivijure-mcp-v*` (see `.github/workflows/publish-npm.yml`). Tag must match
-   `package.json` and be an ancestor of `main`.
+   `package.json` and be an ancestor of `main`; an org admin creates it on the release PR's merge
+   commit (see "Release / deploy").
 2. **Worker deploy** is host-side: pin the published package, set `main` to
    `node_modules/@skyphusion-labs/vivijure-mcp/dist/mcp.js`, secrets `MCP_TOKEN` + `STUDIO_API_TOKEN`,
    var `STUDIO_URL`. Host CI may deploy MCP on studio `v*` when `MCP_HOST` / `MCP_STUDIO_URL` are set.
@@ -85,6 +86,16 @@ Crew: `sudo -n -H -u <member> bash -lc '...'`; commits under `skyphusion-<member
 as `Conrad Rockenhaus <conrad@skyphusion.org>`. Conventional Commits. The package is on the 2.x line (`package.json` is 2.1.0).
 
 ## Release / deploy
+
+A release is a PR that bumps `package.json` and the CHANGELOG, merged through the normal gate; no
+direct push to `main`. Then an org admin (the lead or Conrad; crew cannot create release tags)
+tags that PR's MERGE COMMIT:
+
+```bash
+sha="$(gh pr view <release-pr> --json mergeCommit -q .mergeCommit.oid)"
+git tag -a vivijure-mcp-vX.Y.Z -m "vivijure-mcp vX.Y.Z" "$sha"
+git push origin vivijure-mcp-vX.Y.Z
+```
 
 **npm publish is `vivijure-mcp-v*` or a manual `workflow_dispatch`** (`.github/workflows/publish-npm.yml`).
 A tag must match `package.json`. The workflow fetches `origin/main` and refuses a commit that is not

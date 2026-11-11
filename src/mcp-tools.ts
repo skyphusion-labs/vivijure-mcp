@@ -950,7 +950,9 @@ export const TOOLS: McpTool[] = [
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
-      "qualityTier?, shard_count?, finish_select?, idempotency_key?, projectId? }. " +
+      "qualityTier?, shard_count?, finish_select?, idempotency_key?, projectId?, delivery_width?, " +
+      "delivery_height? }. delivery_width and delivery_height set the film's delivery frame: both or " +
+      "neither, whole numbers above 0. " +
       "keyframe_config and motion_config are flat knob maps for the chosen module. The nested maps " +
       "are { [moduleName]: config }: finish_config -> the per-shot finish chain, speech_config -> the " +
       "speech (dialogue-audio) chain, film_finish_config -> the film.finish chain on the assembled " +
@@ -1043,6 +1045,15 @@ export const TOOLS: McpTool[] = [
           "Client retry key for POST /api/render/film (cf#528). A non-blank string replaces the 60s natural-key backstop. A blank or non-string is absence.",
         ),
         idempotencyKey: STR("Alias of idempotency_key. The studio reads either name."),
+        delivery_width: NUM(
+          "The film's delivery frame width, a whole number above 0. Send it with delivery_height: both " +
+          "or neither, else the studio answers 400 (\"delivery_width and delivery_height must both be " +
+          "whole numbers above 0\"). Omitted, the studio uses its default delivery frame.",
+        ),
+        delivery_height: NUM(
+          "The film's delivery frame height, a whole number above 0. Send it with delivery_width: both " +
+          "or neither.",
+        ),
         reuse_finished: {
           type: "boolean",
           description:

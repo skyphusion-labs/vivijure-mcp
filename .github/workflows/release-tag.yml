@@ -1,0 +1,23 @@
+name: release-tag
+
+# publish-npm.yml triggers only on vivijure-mcp-v*. Any other tag creates no
+# publish run, and an absent run looks like a passed one (mcp#70). This
+# workflow runs on every tag and fails when the prefix is missing. It does
+# not publish.
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+jobs:
+  prefix:
+    name: prefix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fail a tag publish-npm.yml will not run
+        run: node scripts/release-tag.mjs

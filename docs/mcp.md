@@ -613,6 +613,9 @@ There is no undo; treat every call like clicking a "charge my account" button.
 - `shard_count`: alias `shardCount`. Accepted and ignored. Film scatter is retired, so a
   submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage,
   not a split-motion door. The tool omits the field when you do not pass it.
+- `delivery_width`, `delivery_height`: the film's delivery frame. Both or neither, whole numbers
+  above 0; otherwise the studio answers `400` ("delivery_width and delivery_height must both be
+  whole numbers above 0"). Omitted, the studio uses its default delivery frame.
 
 **Voices, two paths (mcp#29):** (1) `dialogue_lines[].voice_id` for voice alone -- works with no
 LoRA; this is the default path for speech. (2) `cast_loras` for identity LoRA **and** voice

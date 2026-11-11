@@ -83,8 +83,8 @@ The Worker reads these values:
 |-------|------|------------|
 | `STUDIO_URL` | var (in `wrangler.mcp.toml`) | The base URL of your studio, e.g. `https://studio.example.com`. No trailing slash needed (it is normalized). |
 | `STUDIO_API_TOKEN` | secret | The studio bearer the MCP presents on every forwarded call (the named consumer token from above). |
-| `MCP_TOKEN` | secret | The gate. Every agent request must carry `Authorization: Bearer <MCP_TOKEN>`. Treated as ONE opaque value: never split, never trimmed. |
-| `MCP_TOKEN_EXTRA` | secret (optional) | ADDITIVE further gate tokens, comma- and/or newline-separated. Any entry opens the gate exactly like `MCP_TOKEN`. Issue a second client its own credential here so `MCP_TOKEN` is never rewritten. Blank entries (a trailing comma, a stray newline) are dropped. |
+| `MCP_TOKEN` | secret | The gate, and the operator's own credential: it holds **operator** scope (every tool). Every agent request must carry `Authorization: Bearer <token>`. Treated as ONE opaque value: never split, never trimmed, never read for a scope prefix. |
+| `MCP_TOKEN_EXTRA` | secret (optional) | ADDITIVE further gate tokens, comma- and/or newline-separated. Issue a second client its own credential here so `MCP_TOKEN` is never rewritten. Each entry holds **consumer** scope unless written `operator:<token>` (`consumer:<token>` is accepted too). The client sends the token alone, without the prefix. Blank entries (a trailing comma, a stray newline) are dropped. See [Token scopes](#token-scopes). |
 | `CONTROL_PLANE_URL` | var (optional) | Hosted control plane base, e.g. `https://studio.vivijure.com`. Enables `cp_*` tools. |
 | `CONTROL_PLANE_ADMIN_TOKEN` | secret (optional) | Admin/operator bearer for `/api/admin/*`. Distinct from the studio token. |
 
@@ -110,8 +110,9 @@ wrangler secret put MCP_TOKEN -c wrangler.mcp.toml < mcp-token.txt
 
 # 5. OPTIONAL: issue a SECOND client its own gate token without touching MCP_TOKEN.
 #    Worker secrets are write-only, so widening access by rewriting MCP_TOKEN means re-supplying
-#    your own token from memory and one typo silently 401s you. Put additional tokens here instead;
-#    any entry opens the gate exactly like MCP_TOKEN, and MCP_TOKEN is never rewritten.
+#    your own token from memory and one typo silently 401s you. Put additional tokens here instead,
+#    and MCP_TOKEN is never rewritten. An entry holds consumer scope; write operator:<token> for an
+#    entry that needs the operator tools (see Token scopes below).
 #    Comma- and/or newline-separated. This secret REPLACES its previous value on every put, so
 #    re-supply the full list of extra tokens each time (that list never contains MCP_TOKEN).
 umask 077 && openssl rand -hex 32 > mcp-token-crew.txt
@@ -243,7 +244,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-**106** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
+**109** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -612,6 +613,9 @@ There is no undo; treat every call like clicking a "charge my account" button.
 - `shard_count`: alias `shardCount`. Accepted and ignored. Film scatter is retired, so a
   submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage,
   not a split-motion door. The tool omits the field when you do not pass it.
+- `delivery_width`, `delivery_height`: the film's delivery frame. Both or neither, whole numbers
+  above 0; otherwise the studio answers `400` ("delivery_width and delivery_height must both be
+  whole numbers above 0"). Omitted, the studio uses its default delivery frame.
 
 **Voices, two paths (mcp#29):** (1) `dialogue_lines[].voice_id` for voice alone -- works with no
 LoRA; this is the default path for speech. (2) `cast_loras` for identity LoRA **and** voice
@@ -660,6 +664,29 @@ last retry did not finish and the film is unchanged; it can be retried again.
 **`retry_film_finish`** -- `POST /api/render/film/:id/finish-retry`. Run again the steps a film names in
 `finish_incomplete`. No clip is re-rendered, and the film goes to the end of the finish queue, so poll again.
 - `id` (required): the `film-<...>` job id. 409 means nothing to retry, or the film is still running.
+
+**`start_long_film`** -- `POST /api/film` (vivijure-cf CONTRACT 2.22a). **Starts a long film built as
+parts. This spends real money:** every part is a film render. The studio splits the master board into
+parts, renders each as an ordinary film and joins them. Only its cron submits a part, within a
+minute; the call only writes. An undeclared argument is refused, as on `submit_film`.
+- `project`, `idempotency_key` (alias `idempotencyKey`), `storyboard`, `character_refs`, `shared`,
+  `spend_ceiling_usd`, `cost_usd_per_shot_est` (required), and `part_size` or `breaks` (one of them).
+- `shared`: `motion_backend`, `style` (`photoreal` | `anime`), `delivery_width` and
+  `delivery_height` are required; also `keyframe_backend`, `keyframe_config`, `motion_config`,
+  `finish_config`, `film_finish_config`, `dialogue_backend`, `dialogue_config`, `cast_loras`,
+  `film_titles`, `qualityTier`, and `delivery_fps` where the studio takes it. `audio_key` is refused.
+- `dialogue_lines`, `part_overrides`, `pause_after_first_part` (default `true`: the film stops after
+  its first part until `resume_long_film`), `project_id`.
+Returns `{ film_id, phase, parts, created, project }`. The same project and key return the same film.
+
+**`poll_long_film`** -- `GET /api/film/:id`. Read a long film. It reads only. `phase` is `planned`,
+`running`, `stopped`, `join`, `done` or `failed`; `stop_code` is `part_failed`, `spend_ceiling`,
+`first_part_hold` or `gate_held`. `cron.stale` true means the cron has not run for 3 minutes.
+- `id` (required): the `film_id` from `start_long_film`.
+
+**`resume_long_film`** -- `POST /api/film/:id/resume`. Carry on past the hold after the first part, or
+join again after a failed join. 400 if there is nothing to resume.
+- `id` (required): the `film_id` from `start_long_film`.
 
 ### Bytes in (bring your own image or audio)
 
@@ -886,16 +913,34 @@ After a human has provisioned (front door + AUP + keys):
 Point a studio-configured MCP at `https://<slug>.studio.vivijure.com` with a **tenant** API token
 for creative tools (separate from the admin bearer).
 
+## Token scopes
+
+Each gate token holds a scope, on the studio's own split (vivijure-cf#520):
+
+- **operator**: every tool. This covers the studio's operator routes (module install, enable and
+  config; storage usage and reconcile), every `cp_*` control-plane tool, and both raw escape
+  hatches, `studio_request` and `control_plane_request`.
+- **consumer**: the studio tools that touch one tenant's own data (projects, storyboards, cast,
+  renders, audio, artifacts), however destructive.
+
+`MCP_TOKEN` holds operator. An `MCP_TOKEN_EXTRA` entry holds consumer unless it is written
+`operator:<token>`. **An entry with no prefix is consumer**, including every entry issued before
+scopes existed, so an existing extra client keeps its consumer tools and loses the operator ones.
+To give it the operator tools again, re-put the list with `operator:` in front of its entry.
+
+A consumer token lists only consumer tools in `tools/list`. A call to an operator tool returns a
+tool error ("This credential is not authorized for this tool: it needs an operator-scoped MCP
+token.") and sends nothing. The control-plane bearer is used only for an operator token.
+
 ## Security boundary
 
 - The MCP is machine-to-machine only, gated by `MCP_TOKEN` and any token in `MCP_TOKEN_EXTRA`
   (fail closed: a wrong token is a `401`, and a Worker with NO gate token at all refuses everything
   rather than opening up). It is a full write path to the studio, **including spend routes**
   (`submit_film`) and, via `studio_request`, delete routes. Treat EVERY gate token with exactly the
-  care you give the studio bearer itself: `MCP_TOKEN_EXTRA` is a convenience for issuing and
-  revoking credentials independently, **not** a lower tier of access. There is no per-token scoping
-  and the Worker never records which token was used, so an extra token is a full-privilege
-  credential.
+  care you give the studio bearer itself. A consumer token still reaches spend and delete routes on
+  the tenant's own data; it cannot reach the operator tools (see [Token scopes](#token-scopes)). The
+  Worker never records which token was used.
 - Give the MCP its own named consumer token (see [Before you start](#before-you-start)) so a leak
   burns one credential, rotation touches one consumer, and MCP traffic is attributable in the
   observability stream.

@@ -80,9 +80,9 @@ describe("gate credentials carry a scope", () => {
 });
 
 describe("a consumer credential lists and calls consumer tools only", () => {
-  it("the split is the one this PR states: 47 operator, 59 consumer", () => {
+  it("the split is the one this PR states: 47 operator, 62 consumer", () => {
     expect(OPERATOR_TOOLS.length).toBe(47);
-    expect(CONSUMER_TOOLS.length).toBe(59);
+    expect(CONSUMER_TOOLS.length).toBe(62);
     for (const n of ["studio_request", "control_plane_request", "storage_reconcile", "install_module", "patch_module_config"]) {
       expect(OPERATOR_TOOLS).toContain(n);
     }

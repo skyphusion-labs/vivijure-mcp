@@ -244,7 +244,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-**106** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
+**109** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -661,6 +661,29 @@ last retry did not finish and the film is unchanged; it can be retried again.
 **`retry_film_finish`** -- `POST /api/render/film/:id/finish-retry`. Run again the steps a film names in
 `finish_incomplete`. No clip is re-rendered, and the film goes to the end of the finish queue, so poll again.
 - `id` (required): the `film-<...>` job id. 409 means nothing to retry, or the film is still running.
+
+**`start_long_film`** -- `POST /api/film` (vivijure-cf CONTRACT 2.22a). **Starts a long film built as
+parts. This spends real money:** every part is a film render. The studio splits the master board into
+parts, renders each as an ordinary film and joins them. Only its cron submits a part, within a
+minute; the call only writes. An undeclared argument is refused, as on `submit_film`.
+- `project`, `idempotency_key` (alias `idempotencyKey`), `storyboard`, `character_refs`, `shared`,
+  `spend_ceiling_usd`, `cost_usd_per_shot_est` (required), and `part_size` or `breaks` (one of them).
+- `shared`: `motion_backend`, `style` (`photoreal` | `anime`), `delivery_width` and
+  `delivery_height` are required; also `keyframe_backend`, `keyframe_config`, `motion_config`,
+  `finish_config`, `film_finish_config`, `dialogue_backend`, `dialogue_config`, `cast_loras`,
+  `film_titles`, `qualityTier`, and `delivery_fps` where the studio takes it. `audio_key` is refused.
+- `dialogue_lines`, `part_overrides`, `pause_after_first_part` (default `true`: the film stops after
+  its first part until `resume_long_film`), `project_id`.
+Returns `{ film_id, phase, parts, created, project }`. The same project and key return the same film.
+
+**`poll_long_film`** -- `GET /api/film/:id`. Read a long film. It reads only. `phase` is `planned`,
+`running`, `stopped`, `join`, `done` or `failed`; `stop_code` is `part_failed`, `spend_ceiling`,
+`first_part_hold` or `gate_held`. `cron.stale` true means the cron has not run for 3 minutes.
+- `id` (required): the `film_id` from `start_long_film`.
+
+**`resume_long_film`** -- `POST /api/film/:id/resume`. Carry on past the hold after the first part, or
+join again after a failed join. 400 if there is nothing to resume.
+- `id` (required): the `film_id` from `start_long_film`.
 
 ### Bytes in (bring your own image or audio)
 

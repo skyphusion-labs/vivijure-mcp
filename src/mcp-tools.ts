@@ -951,8 +951,11 @@ export const TOOLS: McpTool[] = [
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
       "qualityTier?, shard_count?, finish_select?, idempotency_key?, projectId?, delivery_width?, " +
-      "delivery_height? }. delivery_width and delivery_height set the film's delivery frame: both or " +
-      "neither, whole numbers above 0. " +
+      "delivery_height?, dialogue_backend?, dialogue_config?, delivery_fps? }. delivery_width and " +
+      "delivery_height set the film's delivery frame: both or neither, whole numbers above 0. " +
+      "dialogue_backend names the dialogue module the film speaks with, and dialogue_config is " +
+      "{ [moduleName]: config } for it (vivijure-cf#1391); delivery_fps pins the film's frame rate " +
+      "(vivijure-cf#1389). " +
       "keyframe_config and motion_config are flat knob maps for the chosen module. The nested maps " +
       "are { [moduleName]: config }: finish_config -> the per-shot finish chain, speech_config -> the " +
       "speech (dialogue-audio) chain, film_finish_config -> the film.finish chain on the assembled " +
@@ -1053,6 +1056,24 @@ export const TOOLS: McpTool[] = [
         delivery_height: NUM(
           "The film's delivery frame height, a whole number above 0. Send it with delivery_width: both " +
           "or neither.",
+        ),
+        dialogue_backend: STR(
+          "A dialogue module name (from studio_modules hooks['dialogue']), the module this film speaks " +
+          "with (vivijure-cf#1391). Omitted, the studio uses the first dialogue module by ui.order. A " +
+          "name that no installed module serves is a 400 from the studio, by name.",
+        ),
+        dialogue_config: {
+          type: "object",
+          description:
+            "{ [moduleName]: config } per-dialogue-module knobs (vivijure-cf#1391). Each key must name a " +
+            "serving dialogue module. Each map is judged against that module's config_schema (an unknown " +
+            "key or an out-of-range value is a 400, by name) and then clamped, so omitted keys take " +
+            "their defaults.",
+        },
+        delivery_fps: NUM(
+          "The film's delivery frame rate, a whole number above 0 (vivijure-cf#1389). It wins over the " +
+          "rate the finish chain produced; a clip above it loses frames at assemble, with a note. " +
+          "Omitted, the film ships at the rate its finish chain produces.",
         ),
         reuse_finished: {
           type: "boolean",

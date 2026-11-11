@@ -616,6 +616,15 @@ There is no undo; treat every call like clicking a "charge my account" button.
 - `delivery_width`, `delivery_height`: the film's delivery frame. Both or neither, whole numbers
   above 0; otherwise the studio answers `400` ("delivery_width and delivery_height must both be
   whole numbers above 0"). Omitted, the studio uses its default delivery frame.
+- `dialogue_backend` (vivijure-cf#1391): the dialogue module the film speaks with, a name from
+  `studio_modules` `hooks['dialogue']`. Omitted, the studio uses the first dialogue module by
+  `ui.order`. A name no installed module serves is a `400` from the studio, by name.
+- `dialogue_config` (vivijure-cf#1391): `{ [moduleName]: config }` knobs for the dialogue module.
+  Each key must name a serving dialogue module; each map is judged against that module's
+  `config_schema` (an unknown key or an out-of-range value is a `400`, by name), then clamped.
+- `delivery_fps` (vivijure-cf#1389): the film's delivery frame rate, a whole number above 0. It wins
+  over the rate the finish chain produced; a clip above it loses frames at assemble, with a note.
+  Omitted, the film ships at the rate its finish chain produces.
 
 **Voices, two paths (mcp#29):** (1) `dialogue_lines[].voice_id` for voice alone -- works with no
 LoRA; this is the default path for speech. (2) `cast_loras` for identity LoRA **and** voice

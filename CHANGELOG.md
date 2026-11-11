@@ -2,7 +2,8 @@
 
 `@skyphusion-labs/vivijure-mcp` publishes to npm on a `vivijure-mcp-v<X.Y.Z>` tag push; the tag
 prefix is what the publish workflow matches on. The tag is the version of record. This file records
-the why behind each release. Newest first.
+the why behind each release. Newest first. A release is a PR; an org admin tags its merge commit
+(CLAUDE.md, "Release / deploy").
 
 ## Unreleased
 

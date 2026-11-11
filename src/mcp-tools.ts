@@ -97,6 +97,15 @@ function pathSeg(args: Record<string, unknown>, key: string): string {
   return encodeURIComponent(v);
 }
 
+/** A long film's part index for a path: a whole number from 0, as the studio indexes doc.parts. */
+function partIndex(args: Record<string, unknown>): string {
+  const v = args.part;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+    throw new Error("'part' must be a whole number from 0 (the index in poll_long_film parts[])");
+  }
+  return String(v);
+}
+
 function reqStr(args: Record<string, unknown>, key: string): string {
   const v = args[key];
   if (typeof v !== "string" || v.trim() === "") {
@@ -1066,6 +1075,13 @@ export const TOOLS: McpTool[] = [
           "rate the finish chain produced; a clip above it loses frames at assemble, with a note. " +
           "Omitted, the film ships at the rate its finish chain produces.",
         ),
+        reuse_finished: {
+          type: "boolean",
+          description:
+            "true keeps each dialogue line, clip and finish step from an earlier run of the same project " +
+            "whose recorded inputs are proven identical, and buys only the rest (vivijure-cf#1166). Only " +
+            "the exact boolean true turns it on; anything else rebuys.",
+        },
         projectId: STR(
           "A storyboard project's id (from list_projects or create_project). The studio saves this film's " +
           "board there and links the render to it. Omitted, the studio picks or makes a project from the " +
@@ -1214,6 +1230,115 @@ export const TOOLS: McpTool[] = [
       "changes nothing. 400 if there is nothing to resume, 409 if the film changed during the call.",
     inputSchema: OBJ({ id: STR("The film_id from start_long_film.") }, ["id"]),
     build: (a) => ({ method: "POST", path: `/api/film/${pathSeg(a, "id")}/resume` }),
+  },
+  {
+    name: "list_long_films",
+    scope: "consumer",
+    description:
+      "GET /api/film. List long films built as parts, newest first, at most 50: { films: [{ film_id, " +
+      "project, phase, stop_reason, stop_code?, created_at, shots_done, shots_total }] }. It reads only.",
+    inputSchema: OBJ({}),
+    build: () => ({ method: "GET", path: "/api/film" }),
+  },
+  {
+    name: "get_long_film_part_shots",
+    scope: "consumer",
+    description:
+      "GET /api/film/:id/parts/:n/shots. A part's shots: { shots: [{ shot_id, index, status, seconds, " +
+      "delivered_seconds?, keyframe_key, clip_key, prompt, line, error, finish_degraded, attempts?, " +
+      "retake_status }] }. shot_id is the board's own id; retake_status is waiting, running or null. " +
+      "It reads stored job docs only. 404 if the film or part is unknown.",
+    inputSchema: OBJ({ id: STR("The film_id from start_long_film."), part: NUM("The part's index in poll_long_film parts[] (0 is the first part).") }, ["id", "part"]),
+    build: (a) => ({ method: "GET", path: `/api/film/${pathSeg(a, "id")}/parts/${partIndex(a)}/shots` }),
+  },
+  {
+    name: "retry_long_film_part",
+    scope: "consumer",
+    description:
+      "POST /api/film/:id/parts/:n/retry with { shots: \"failed\" }. SPENDS: puts a FAILED part back in " +
+      "line; the cron re-submits it with its stored inputs and reuse_finished: true, keeping proven work. " +
+      "400 if the part has not failed, 409 if the film changed during the call. A retry that would cross " +
+      "the ceiling leaves the part pending and stops the film.",
+    inputSchema: OBJ({ id: STR("The film_id from start_long_film."), part: NUM("The part's index in poll_long_film parts[] (0 is the first part).") }, ["id", "part"]),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/film/${pathSeg(a, "id")}/parts/${partIndex(a)}/retry`,
+      body: { shots: "failed" },
+    }),
+  },
+  {
+    name: "retake_long_film_shot",
+    scope: "consumer",
+    description:
+      "POST /api/film/:id/shots/:shot/retake. SPENDS: marks one shot of a FINISHED part for a new take. " +
+      "The part runs again from its stills with reuse_finished, buying that shot's clip and finish (and " +
+      "its line if the line or voice changed), then the film joins again to a new key. new_still: true " +
+      "draws the shot a new still first, with seed or one picked for you (a repeat of the same seed may " +
+      "give back the same still). rebuy_previous: true also buys the shot before, so it ends on the new " +
+      "still. 400 if the shot is unknown or its part is not finished; 409 if the film changed.",
+    inputSchema: OBJ(
+      {
+        id: STR("The film_id from start_long_film."),
+        shot: STR("The master board's shot_id (from get_long_film_part_shots)."),
+        prompt: STR("A new prompt for the shot."),
+        line: STR("A new spoken line for the shot."),
+        voice_id: STR("A voice name from the voices tool."),
+        new_still: { type: "boolean", description: "Draw the shot a new still first." },
+        seed: NUM("The seed for the new still (with new_still)."),
+        rebuy_previous: { type: "boolean", description: "Also buy the shot before, so it ends on the new still." },
+      },
+      ["id", "shot"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/film/${pathSeg(a, "id")}/shots/${pathSeg(a, "shot")}/retake`,
+      body: bodyWithout(a, "id", "shot"),
+    }),
+  },
+  {
+    name: "cancel_long_film_retake",
+    scope: "consumer",
+    description:
+      "POST /api/film/:id/parts/:n/retake/cancel. Drop a retake that is waiting or failed, and put the " +
+      "part's film, prompts and lines back. A take that already ran stays paid for. 400 if the part has " +
+      "no such retake; 409 if the film changed during the call.",
+    inputSchema: OBJ({ id: STR("The film_id from start_long_film."), part: NUM("The part's index in poll_long_film parts[] (0 is the first part).") }, ["id", "part"]),
+    build: (a) => ({ method: "POST", path: `/api/film/${pathSeg(a, "id")}/parts/${partIndex(a)}/retake/cancel` }),
+  },
+  {
+    name: "raise_long_film_ceiling",
+    scope: "consumer",
+    description:
+      "POST /api/film/:id/ceiling with { spend_ceiling_usd }. SPENDS: raises the ceiling, and a film " +
+      "stopped by it carries on. The value must be above the current one; 400 otherwise, or if the film " +
+      "is done or failed. 409 if the film changed during the call.",
+    inputSchema: OBJ(
+      { id: STR("The film_id from start_long_film."), spend_ceiling_usd: NUM("The new ceiling in USD, above the current one.") },
+      ["id", "spend_ceiling_usd"],
+    ),
+    build: (a) => ({
+      method: "POST",
+      path: `/api/film/${pathSeg(a, "id")}/ceiling`,
+      body: { spend_ceiling_usd: a.spend_ceiling_usd },
+    }),
+  },
+  {
+    name: "delete_long_film",
+    scope: "consumer",
+    description:
+      "DELETE /api/film/:id. IRREVERSIBLE: removes a long film as a whole, every part's renders, every " +
+      "joined version and its captions, and the film's record. Requires confirm: true, or nothing is " +
+      "sent. Returns { objects_freed, objects_retained, renders_removed }. 409 while a part is running " +
+      "or submitting, a join is out, or a still is being drawn; 409 with freed / retained / failed / " +
+      "unreached when storage could not be fully reclaimed (the film is kept; the same call carries on).",
+    inputSchema: OBJ(
+      { id: STR("The film_id from start_long_film."), confirm: { type: "boolean", description: "Must be true. Deleting a film cannot be undone." } },
+      ["id", "confirm"],
+    ),
+    build: (a) => {
+      if (a.confirm !== true) throw new Error("delete_long_film needs confirm: true; deleting a film cannot be undone");
+      return { method: "DELETE", path: `/api/film/${pathSeg(a, "id")}` };
+    },
   },
 
   // --- bytes IN (cf#317: bring your own image or audio) ------------------------

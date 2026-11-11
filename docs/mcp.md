@@ -244,7 +244,7 @@ Rules that hold for every tool, so the reference below does not repeat them:
 
 ## Tool reference
 
-**109** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
+**116** tools in **12** groups. Arguments marked **(required)** must be present; everything else is
 optional. Response shapes below show the fields you will steer by; [CONTRACT.md](CONTRACT.md) has
 the full schemas.
 
@@ -696,6 +696,35 @@ Returns `{ film_id, phase, parts, created, project }`. The same project and key 
 **`resume_long_film`** -- `POST /api/film/:id/resume`. Carry on past the hold after the first part, or
 join again after a failed join. 400 if there is nothing to resume.
 - `id` (required): the `film_id` from `start_long_film`.
+
+**`list_long_films`** -- `GET /api/film`. Long films, newest first, at most 50. Reads only.
+
+**`get_long_film_part_shots`** -- `GET /api/film/:id/parts/:n/shots`. A part's shots, with
+`retake_status` (`waiting`, `running` or `null`). Reads stored job docs only.
+- `id`, `part` (required): the film and the part's index in `poll_long_film` `parts[]` (0 is the first).
+
+**`retry_long_film_part`** -- `POST /api/film/:id/parts/:n/retry`. **Spends.** Puts a failed part back
+in line (the tool sends `{ "shots": "failed" }`); it is re-submitted with `reuse_finished: true`.
+An undeclared argument is refused. 400 if the part has not failed.
+- `id`, `part` (required).
+
+**`retake_long_film_shot`** -- `POST /api/film/:id/shots/:shot/retake`. **Spends.** A new take of one
+shot of a finished part. An undeclared argument is refused.
+- `id`, `shot` (required; the master `shot_id`), `prompt`, `line`, `voice_id`, `new_still`, `seed`,
+  `rebuy_previous`.
+
+**`cancel_long_film_retake`** -- `POST /api/film/:id/parts/:n/retake/cancel`. Drops a waiting or failed
+retake and puts the part back. A take that already ran stays paid for.
+- `id`, `part` (required).
+
+**`raise_long_film_ceiling`** -- `POST /api/film/:id/ceiling`. **Spends.** Raises
+`spend_ceiling_usd` (it must be above the current value), and a film stopped by the ceiling carries
+on. An undeclared argument is refused.
+- `id`, `spend_ceiling_usd` (required).
+
+**`delete_long_film`** -- `DELETE /api/film/:id`. **Irreversible.** Removes the film as a whole:
+every part's renders, every joined version and its captions, and its record.
+- `id`, `confirm` (required): `confirm` must be `true`, or the tool refuses and sends nothing.
 
 ### Bytes in (bring your own image or audio)
 

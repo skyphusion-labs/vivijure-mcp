@@ -90,3 +90,11 @@ as `Conrad Rockenhaus <conrad@skyphusion.org>`. Conventional Commits. The packag
 A tag must match `package.json`. The workflow fetches `origin/main` and refuses a commit that is not
 on it. A plain `v*` tag does not publish this package. Merges to `main` run CI only. The Worker that
 imports the package is deployed by the host, not by this workflow.
+
+## Release convention (bump-at-release)
+
+One convention for every skyphusion-labs repo (Conrad, ruled 2026-11-10, fleet-chezmoi#1766). A version moves ONLY in a release PR: bump the version, then assemble the changelog. Feature and fix PRs do not bump. Releases go through a PR (fleet-chezmoi#1622) and the tag goes on that PR's merge commit.
+
+- Version of record here: package.json (and package-lock.json).
+- Tag shape: `vivijure-mcp-v*`.
+- Check before a release PR: does a tag already exist for the version currently in the manifest? Yes means the cycle is closed, so the release PR bumps. No means a bump already landed outside a release PR; stop and read why before bumping again.

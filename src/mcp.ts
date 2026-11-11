@@ -29,6 +29,16 @@ import { TOOLS, TOOLS_BY_NAME, SCOPE_DENY_TEXT, rejectUndeclared, runTool, scope
 const SERVER_INFO = { name: "vivijure-studio", version: "2.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
+/** Tools that spend, and so refuse an undeclared argument (mcp#61): a typo must not ride into a spend
+ *  that looks successful. */
+export const STRICT_ARGUMENT_TOOLS: ReadonlySet<string> = new Set([
+  "submit_film",
+  "start_long_film",
+  "retry_long_film_part",
+  "retake_long_film_shot",
+  "raise_long_film_ceiling",
+]);
+
 // Constant-time compare by SHA-256 digest, as vivijure-cf's auth-gate.ts does: hash both sides, then
 // XOR-fold the two fixed-length digests. The scan always covers all 32 bytes, so neither the length of
 // the presented token nor the position of the first mismatch shows in the timing.
@@ -195,8 +205,8 @@ async function handleRpc(msg: RpcMessage, env: McpEnv, scope: ToolScope): Promis
       try {
         // submit_film only. preflight drops undeclared keys and still calls (mcp#26).
         // A typo on submit_film must not ride into a render that looks successful (mcp#61).
-        // start_long_film spends the same way, so a typo there is refused too.
-        if (name === "submit_film" || name === "start_long_film") rejectUndeclared(tool.inputSchema, args);
+        // Every tool that spends gets the same check, so a typo cannot ride into a spend.
+        if (STRICT_ARGUMENT_TOOLS.has(name as string)) rejectUndeclared(tool.inputSchema, args);
         call = tool.build(args);
       } catch (err) {
         // A bad argument is DATA, not a transport error: return it as an isError tool result so the

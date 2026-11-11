@@ -1,6 +1,6 @@
 # @skyphusion-labs/vivijure-mcp
 
-**Agent MCP for [Vivijure Studio](https://vivijure.com)** -- drive the film studio (and optionally the
+**Agent MCP for [Vivijure Studio](https://vivijure.dev)** -- drive the film studio (and optionally the
 hosted control plane) from Claude, Cursor, or any [Model Context Protocol](https://modelcontextprotocol.io/) client.
 
 Stateless Worker package that proxies **curated tools** to:
@@ -13,7 +13,7 @@ Stateless Worker package that proxies **curated tools** to:
 | **npm** | [`@skyphusion-labs/vivijure-mcp`](https://www.npmjs.com/package/@skyphusion-labs/vivijure-mcp) |
 | **Version** | **2.1.0** (106 tools) -- trust `package.json` / tags |
 | **License** | AGPL-3.0-only |
-| **Product** | https://vivijure.com |
+| **Product** | https://vivijure.dev |
 
 ## Documentation
 

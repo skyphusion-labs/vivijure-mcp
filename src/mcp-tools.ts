@@ -941,10 +941,12 @@ export const TOOLS: McpTool[] = [
       "(req, from bundle_storyboard), scenes (req: [{ shot_id, prompt, seconds }]), project?, " +
       "motion_backend?, keyframe_backend?, keyframe_config?, motion_config?, finish_config?, speech_config?, " +
       "film_finish_config?, master_config?, audio_key?, film_titles?, dialogue_lines?, cast_loras?, " +
-      "qualityTier?, shard_count?, finish_select?, idempotency_key?, projectId?, dialogue_backend?, " +
-      "dialogue_config?, delivery_fps? }. dialogue_backend names the dialogue module the film speaks " +
-      "with, and dialogue_config is { [moduleName]: config } for it (vivijure-cf#1391); delivery_fps " +
-      "pins the film's frame rate (vivijure-cf#1389). " +
+      "qualityTier?, shard_count?, finish_select?, idempotency_key?, projectId?, delivery_width?, " +
+      "delivery_height?, dialogue_backend?, dialogue_config?, delivery_fps? }. delivery_width and " +
+      "delivery_height set the film's delivery frame: both or neither, whole numbers above 0. " +
+      "dialogue_backend names the dialogue module the film speaks with, and dialogue_config is " +
+      "{ [moduleName]: config } for it (vivijure-cf#1391); delivery_fps pins the film's frame rate " +
+      "(vivijure-cf#1389). " +
       "keyframe_config and motion_config are flat knob maps for the chosen module. The nested maps " +
       "are { [moduleName]: config }: finish_config -> the per-shot finish chain, speech_config -> the " +
       "speech (dialogue-audio) chain, film_finish_config -> the film.finish chain on the assembled " +
@@ -1037,6 +1039,15 @@ export const TOOLS: McpTool[] = [
           "Client retry key for POST /api/render/film (cf#528). A non-blank string replaces the 60s natural-key backstop. A blank or non-string is absence.",
         ),
         idempotencyKey: STR("Alias of idempotency_key. The studio reads either name."),
+        delivery_width: NUM(
+          "The film's delivery frame width, a whole number above 0. Send it with delivery_height: both " +
+          "or neither, else the studio answers 400 (\"delivery_width and delivery_height must both be " +
+          "whole numbers above 0\"). Omitted, the studio uses its default delivery frame.",
+        ),
+        delivery_height: NUM(
+          "The film's delivery frame height, a whole number above 0. Send it with delivery_width: both " +
+          "or neither.",
+        ),
         dialogue_backend: STR(
           "A dialogue module name (from studio_modules hooks['dialogue']), the module this film speaks " +
           "with (vivijure-cf#1391). Omitted, the studio uses the first dialogue module by ui.order. A " +
@@ -1115,6 +1126,94 @@ export const TOOLS: McpTool[] = [
       method: "POST",
       path: `/api/render/film/${pathSeg(a, "id")}/finish-retry`,
     }),
+  },
+
+  // --- long films as parts (vivijure-cf docs/CONTRACT.md 2.22a) -----------------------------------
+  {
+    name: "start_long_film",
+    scope: "consumer",
+    description:
+      "POST /api/film. START A LONG FILM BUILT AS PARTS (this SPENDS: every part is a film render). The " +
+      "studio splits the master board into parts, renders each as an ordinary film, and joins them. " +
+      "Only its cron submits a part, within a minute; this call only writes. Body: { project (req), " +
+      "idempotency_key (req, alias idempotencyKey), storyboard (req), character_refs (req), shared " +
+      "(req), spend_ceiling_usd (req), cost_usd_per_shot_est (req), part_size or breaks (one of them), " +
+      "dialogue_lines?, part_overrides?, pause_after_first_part?, project_id? }. shared carries the " +
+      "settings every part uses: motion_backend, style (photoreal or anime), delivery_width and " +
+      "delivery_height are required; also keyframe_backend, keyframe_config, motion_config, " +
+      "finish_config, film_finish_config, dialogue_backend, dialogue_config, cast_loras, film_titles, " +
+      "qualityTier, and delivery_fps where the studio takes it. audio_key is refused in shared. " +
+      "pause_after_first_part defaults to true: the film stops after its first part until " +
+      "resume_long_film. Returns { film_id, phase, parts, created, project }. The same project and key " +
+      "return the same film (created: false); a repeat key with a different request is 409. Then " +
+      "poll_long_film.",
+    inputSchema: OBJ(
+      {
+        project: STR("1 to 48 letters, digits, _ or -. Part n runs in project <project>_pNN."),
+        idempotency_key: STR("Required (or idempotencyKey). The same project and key return the same film with created: false."),
+        idempotencyKey: STR("Alias of idempotency_key."),
+        storyboard: {
+          type: "object",
+          description:
+            "The master board, as bundle_storyboard takes it. Each scene needs its own id (or shot_id) " +
+            "and target_seconds (or seconds).",
+        },
+        character_refs: { type: "object", description: "As characterRefs on bundle_storyboard." },
+        dialogue_lines: ARR("[{ shot_id, text, voice_id? }] by the board's scene id. Omitted, they come from each scene's dialogue.text."),
+        part_size: NUM("Shots per part. Send this or breaks."),
+        breaks: ARR("Shot counts where a part ends. Send this or part_size."),
+        shared: {
+          type: "object",
+          description:
+            "Settings every part uses. Required: motion_backend, style (photoreal | anime), " +
+            "delivery_width, delivery_height. Also keyframe_backend (omitted: anime uses cloud-keyframe, " +
+            "photoreal uses keyframe), keyframe_config, motion_config, finish_config, film_finish_config, " +
+            "dialogue_backend and dialogue_config (every part speaks with one dialogue module), " +
+            "cast_loras, film_titles, qualityTier, and delivery_fps where the studio takes it (one rate " +
+            "for every part). audio_key is refused here.",
+        },
+        part_overrides: ARR("[{ index, cast_loras?, character_refs?, motion_backend? }]: what differs for one part."),
+        spend_ceiling_usd: NUM("No new part is submitted if its estimate would cross this."),
+        cost_usd_per_shot_est: NUM("Your estimate per shot. The ceiling works from it, so it is only as good as this number."),
+        pause_after_first_part: {
+          type: "boolean",
+          description: "Default true: after the first part the film stops until resume_long_film, so a person can watch it.",
+        },
+        project_id: STR("The storyboard project the board came from (its public id). Omitted, the board goes to a project named project."),
+      },
+      ["project", "storyboard", "character_refs", "shared", "spend_ceiling_usd", "cost_usd_per_shot_est"],
+    ),
+    build: (a) => {
+      reqStr(a, "project");
+      const key = a.idempotency_key ?? a.idempotencyKey;
+      if (typeof key !== "string" || key.trim() === "") {
+        throw new Error("missing required argument 'idempotency_key' (or idempotencyKey)");
+      }
+      return { method: "POST", path: "/api/film", body: bodyWithout(a) };
+    },
+  },
+  {
+    name: "poll_long_film",
+    scope: "consumer",
+    description:
+      "GET /api/film/:id. Read a long film built as parts. It reads only; the studio's cron advances " +
+      "the film. Returns phase (planned, running, stopped, join, done, failed), stop_reason and " +
+      "stop_code (part_failed, spend_ceiling, first_part_hold, gate_held), shots_done of shots_total, " +
+      "the spend estimates, parts[], output_key when joined, and cron { last_tick_at, stale }: stale " +
+      "true means the cron has not run for 3 minutes, which reads like a slow film but is not. " +
+      "stop_code first_part_hold means it waits for resume_long_film.",
+    inputSchema: OBJ({ id: STR("The film_id from start_long_film.") }, ["id"]),
+    build: (a) => ({ method: "GET", path: `/api/film/${pathSeg(a, "id")}` }),
+  },
+  {
+    name: "resume_long_film",
+    scope: "consumer",
+    description:
+      "POST /api/film/:id/resume. Carry a long film on past its hold after the first part, or join " +
+      "again after a failed join. The next cron tick acts on it. On a film that can already act it " +
+      "changes nothing. 400 if there is nothing to resume, 409 if the film changed during the call.",
+    inputSchema: OBJ({ id: STR("The film_id from start_long_film.") }, ["id"]),
+    build: (a) => ({ method: "POST", path: `/api/film/${pathSeg(a, "id")}/resume` }),
   },
 
   // --- bytes IN (cf#317: bring your own image or audio) ------------------------

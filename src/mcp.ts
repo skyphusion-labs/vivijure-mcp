@@ -195,7 +195,8 @@ async function handleRpc(msg: RpcMessage, env: McpEnv, scope: ToolScope): Promis
       try {
         // submit_film only. preflight drops undeclared keys and still calls (mcp#26).
         // A typo on submit_film must not ride into a render that looks successful (mcp#61).
-        if (name === "submit_film") rejectUndeclared(tool.inputSchema, args);
+        // start_long_film spends the same way, so a typo there is refused too.
+        if (name === "submit_film" || name === "start_long_film") rejectUndeclared(tool.inputSchema, args);
         call = tool.build(args);
       } catch (err) {
         // A bad argument is DATA, not a transport error: return it as an isError tool result so the

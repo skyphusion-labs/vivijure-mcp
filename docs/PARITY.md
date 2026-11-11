@@ -1,10 +1,10 @@
-# Vivijure MCP parity matrix (1.3)
+# Vivijure MCP parity matrix
 
 Honest map of what a human can do in **vivijure-cf** / **vivijure-local** panels and on the
 **vivijure-control-plane** operator surface, versus curated MCP tools. Escape hatches
 (`studio_request`, `control_plane_request`) cover remainder that is JSON-shaped.
 
-**Version:** package `1.4.1` -- re-count tools from `src/mcp-tools.ts` (`TOOLS.length`).
+**Version:** see `package.json`; re-count tools from `src/mcp-tools.ts` (`TOOLS.length`).
 
 ## Verdict
 

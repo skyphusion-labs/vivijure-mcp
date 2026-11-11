@@ -18,7 +18,7 @@
 // until done/failed. This server never long-polls or holds job state.
 
 import type { McpEnv } from "./mcp-env.js";
-import { TOOLS, TOOLS_BY_NAME, rejectUndeclared, runTool } from "./mcp-tools.js";
+import { TOOLS, TOOLS_BY_NAME, SCOPE_DENY_TEXT, rejectUndeclared, runTool, scopeAllows, type ToolScope } from "./mcp-tools.js";
 
 // KEEP IN SYNC WITH package.json "version". This is the ONLY version an MCP client can read off the
 // wire (`serverInfo` in the initialize reply), and it sat at 0.1.0 from v1.0.0 through v1.0.1 while
@@ -29,14 +29,19 @@ import { TOOLS, TOOLS_BY_NAME, rejectUndeclared, runTool } from "./mcp-tools.js"
 const SERVER_INFO = { name: "vivijure-studio", version: "2.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    let pad = 0;
-    for (let i = 0; i < a.length; i++) pad |= a.charCodeAt(i) ^ a.charCodeAt(i);
-    return false;
-  }
+// Constant-time compare by SHA-256 digest, as vivijure-cf's auth-gate.ts does: hash both sides, then
+// XOR-fold the two fixed-length digests. The scan always covers all 32 bytes, so neither the length of
+// the presented token nor the position of the first mismatch shows in the timing.
+async function constantTimeEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [da, db] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const ua = new Uint8Array(da);
+  const ub = new Uint8Array(db);
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < ua.length; i++) diff |= ua[i] ^ ub[i];
   return diff === 0;
 }
 
@@ -70,12 +75,40 @@ function timingSafeEqual(a: string, b: string): boolean {
 // ever sees it. The credential set is therefore asserted directly. Not re-exported from
 // package.json; it is an internal seam, not public API.
 export function gateCredentials(env: McpEnv): string[] {
-  const out: string[] = [];
-  if (typeof env.MCP_TOKEN === "string" && env.MCP_TOKEN.trim() !== "") out.push(env.MCP_TOKEN);
+  return gateEntries(env).map((e) => e.token);
+}
+
+/** One gate credential and the scope it holds (vivijure-cf#520's split).
+ *
+ *  SCOPES, and what an unscoped token gets:
+ *   - MCP_TOKEN is the operator's own credential (see mcp-env.ts) and holds `operator`, as it always
+ *     has in effect. It is still ONE opaque value, never split or prefix-parsed.
+ *   - An MCP_TOKEN_EXTRA entry holds `consumer` unless it is written `operator:<token>`.
+ *     `consumer:<token>` is accepted too, for clarity. A bare entry is CONSUMER: these are the seats
+ *     issued to other clients, and the safe default is the narrower scope. Only those two exact words
+ *     followed by ":" are read as a scope; anything else is the whole token.
+ *  A consumer credential sees and calls consumer tools only. */
+export interface GateEntry {
+  token: string;
+  scope: ToolScope;
+}
+
+export function gateEntries(env: McpEnv): GateEntry[] {
+  const out: GateEntry[] = [];
+  if (typeof env.MCP_TOKEN === "string" && env.MCP_TOKEN.trim() !== "") {
+    out.push({ token: env.MCP_TOKEN, scope: "operator" });
+  }
   if (typeof env.MCP_TOKEN_EXTRA === "string") {
     for (const raw of env.MCP_TOKEN_EXTRA.split(/[,\r\n]/)) {
       const entry = raw.trim();
-      if (entry !== "") out.push(entry);
+      if (entry === "") continue;
+      const m = /^(operator|consumer):(.*)$/.exec(entry);
+      if (m) {
+        const token = m[2].trim();
+        if (token !== "") out.push({ token, scope: m[1] as ToolScope });
+      } else {
+        out.push({ token: entry, scope: "consumer" });
+      }
     }
   }
   return out;
@@ -84,12 +117,24 @@ export function gateCredentials(env: McpEnv): string[] {
 // Compare against EVERY credential and OR-accumulate, with no early return: the runtime does not
 // depend on which token was presented or on how early it matched. Returns a boolean and nothing
 // else -- which credential opened the gate is never returned, logged or otherwise surfaced.
-export function gateOpens(auth: string, env: McpEnv): boolean {
-  let opened = 0;
-  for (const token of gateCredentials(env)) {
-    opened |= timingSafeEqual(auth, `Bearer ${token}`) ? 1 : 0;
+export async function gateScope(auth: string, env: McpEnv): Promise<ToolScope | null> {
+  let consumer = 0;
+  let operator = 0;
+  for (const e of gateEntries(env)) {
+    const hit = (await constantTimeEqual(auth, `Bearer ${e.token}`)) ? 1 : 0;
+    if (e.scope === "operator") operator |= hit;
+    else consumer |= hit;
   }
-  return opened !== 0;
+  // The same token listed twice with two scopes resolves to the wider one: the operator wrote both.
+  if (operator) return "operator";
+  if (consumer) return "consumer";
+  return null;
+}
+
+/** Whether any credential opens the gate. Async: a caller that forgets to await gets a Promise, and a
+ *  Promise is truthy, so the gate below awaits gateScope() directly and never uses this. */
+export async function gateOpens(auth: string, env: McpEnv): Promise<boolean> {
+  return (await gateScope(auth, env)) !== null;
 }
 
 interface RpcMessage {
@@ -113,14 +158,17 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}): 
   });
 }
 
-// Public tool list: name + description + inputSchema only (no server-side build function).
-const PUBLIC_TOOLS = TOOLS.map((t) => ({
-  name: t.name,
-  description: t.description,
-  inputSchema: t.inputSchema,
-}));
+// Public tool list: name + description + inputSchema only (no server-side build function). A
+// credential lists only the tools its scope may call.
+function publicTools(scope: ToolScope) {
+  return TOOLS.filter((t) => scopeAllows(t.scope, scope)).map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  }));
+}
 
-async function handleRpc(msg: RpcMessage, env: McpEnv): Promise<unknown> {
+async function handleRpc(msg: RpcMessage, env: McpEnv, scope: ToolScope): Promise<unknown> {
   const { id, method, params } = msg;
   switch (method) {
     case "initialize":
@@ -132,11 +180,16 @@ async function handleRpc(msg: RpcMessage, env: McpEnv): Promise<unknown> {
     case "ping":
       return rpcResult(id, {});
     case "tools/list":
-      return rpcResult(id, { tools: PUBLIC_TOOLS });
+      return rpcResult(id, { tools: publicTools(scope) });
     case "tools/call": {
       const name = params?.name as string | undefined;
       const tool = name ? TOOLS_BY_NAME.get(name) : undefined;
       if (!tool) return rpcError(id, -32602, `Unknown tool: ${String(name)}`);
+      // vivijure-cf#520's split, held at the MCP: a consumer credential calls consumer tools only.
+      // Refused before any argument is read or any request is built.
+      if (!scopeAllows(tool.scope, scope)) {
+        return rpcResult(id, { content: [{ type: "text", text: SCOPE_DENY_TEXT }], isError: true });
+      }
       const args = (params?.arguments as Record<string, unknown>) || {};
       let call;
       try {
@@ -152,7 +205,7 @@ async function handleRpc(msg: RpcMessage, env: McpEnv): Promise<unknown> {
           isError: true,
         });
       }
-      const result = await runTool(env, call, { inlineImages: tool.inlineImages === true });
+      const result = await runTool(env, call, { inlineImages: tool.inlineImages === true, scope });
       return rpcResult(id, result);
     }
     default:
@@ -180,7 +233,8 @@ export default {
     // Bearer gate, fail closed. Machine-to-machine only. Any credential in MCP_TOKEN or
     // MCP_TOKEN_EXTRA opens it; see gateCredentials() for why blank entries are dropped.
     const auth = request.headers.get("Authorization") ?? "";
-    if (!gateOpens(auth, env)) {
+    const scope = await gateScope(auth, env);
+    if (scope === null) {
       return json({ error: "unauthorized" }, 401, { "WWW-Authenticate": "Bearer" });
     }
 
@@ -200,7 +254,7 @@ export default {
     if (Array.isArray(payload)) {
       const responses: unknown[] = [];
       for (const m of payload) {
-        if (hasId(m)) responses.push(await handleRpc(m, env));
+        if (hasId(m)) responses.push(await handleRpc(m, env, scope));
       }
       return responses.length ? json(responses) : json(null, 202);
     }
@@ -208,6 +262,6 @@ export default {
     // Notifications (no id) get no body, just 202 Accepted.
     if (!hasId(payload)) return json(null, 202);
 
-    return json(await handleRpc(payload, env));
+    return json(await handleRpc(payload, env, scope));
   },
 };

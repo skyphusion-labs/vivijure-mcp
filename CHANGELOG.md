@@ -6,6 +6,8 @@ the why behind each release. Newest first.
 
 ## Unreleased
 
+- **feat(tools): `submit_film` takes `dialogue_backend`, `dialogue_config` and `delivery_fps`.** These are the studio's `POST /api/render/film` fields from vivijure-cf#1391 (the dialogue module and its knobs) and vivijure-cf#1389 (the film's delivery frame rate). `submit_film` refuses an undeclared key (mcp#61), so before this each of the three was refused. Each is forwarded as given, and the tool sends none of them when they are not passed. There is no MCP tool for the long-film door `POST /api/film`, which takes the same three inside `shared`.
+
 - **feat(auth): each gate token holds a scope, on the studio's operator / consumer split.** Every tool now declares `scope: "operator" | "consumer"` (required, so a new tool cannot omit it). Operator: the 37 `cp_*` tools, the studio module install, enable and config tools, `storage_usage` and `storage_reconcile`, and the two raw escape hatches. Consumer: the other 59. `MCP_TOKEN` holds operator. An `MCP_TOKEN_EXTRA` entry holds consumer unless written `operator:<token>`; **an entry with no prefix is consumer**, so an existing extra client keeps its consumer tools and needs the `operator:` prefix for the rest. A consumer token lists only consumer tools and gets a tool error for the others, with nothing sent. The control-plane bearer is used only for an operator token. See docs/mcp.md, Token scopes.
 - **fix(tools): an id of `.` or `..` is refused before the path is built**, for every id argument, and an artifact key with an empty or `.` segment is refused too.
 - **fix(gate): the gate compares SHA-256 digests**, as vivijure-cf's auth-gate.ts does, so the compare takes the same time whatever the presented token's length.
